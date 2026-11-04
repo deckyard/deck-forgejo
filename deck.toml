@@ -1,0 +1,19 @@
+[package]
+name = "@deckyard/forgejo"
+version = "0.1.0"
+description = "A client for the Forgejo REST API: repositories, issues, pull requests, releases with assets, branches, tags and files"
+license = "LGPL-3.0-only"
+authors = ["mplx <mplx@jennifer-lang.dev>"]
+# The deck talks to a Forgejo instance over HTTPS, so it opens sockets. No
+# `exec`: it does not run git. No `sql`.
+capabilities = ["net"]
+keywords = ["forgejo", "gitea", "codeberg", "git", "issues", "pull-requests", "releases", "api"]
+
+[package.urls]
+deck = "https://raw.githubusercontent.com/deckyard/deck-forgejo/main/deck.toml"
+homepage = "https://github.com/deckyard/deck-forgejo"
+manual = "https://deckyard.github.io/deck-forgejo/"
+
+# Only the default binary: `jennifer-tiny` has no `net` capability.
+[engines]
+jennifer = ">=0.25.0"
