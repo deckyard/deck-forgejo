@@ -44,5 +44,5 @@ forgejo: POST /user/repos: HTTP 409: The repository with the same name already e
 
 ## Requirements
 
-Jennifer 0.25.0 or newer, the default `jennifer` binary, and the `net`
+Jennifer 0.26.0 or newer, the default `jennifer` binary, and the `net`
 capability.

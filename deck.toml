@@ -14,6 +14,7 @@ deck = "https://raw.githubusercontent.com/deckyard/deck-forgejo/main/deck.toml"
 homepage = "https://github.com/deckyard/deck-forgejo"
 manual = "https://deckyard.github.io/deck-forgejo/"
 
+# 0.26.0 is the first release with `os.hasEnv`, which the example uses.
 # Only the default binary: `jennifer-tiny` has no `net` capability.
 [engines]
-jennifer = ">=0.25.0"
+jennifer = ">=0.26.0"

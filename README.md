@@ -40,7 +40,7 @@ forgejo.uploadAsset($c, "me/app", $rel.id, "app.tar.gz", fs.readBytes("dist/app.
 
 ## Requirements
 
-Jennifer 0.25.0 or newer, the default `jennifer` binary (not
+Jennifer 0.26.0 or newer, the default `jennifer` binary (not
 `jennifer-tiny`), and the `net` capability.
 
 ## Development
