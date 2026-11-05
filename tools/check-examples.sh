@@ -19,6 +19,7 @@
 # Usage: tools/check-examples.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# Every example needs a Proxmox VE host and a credential, so CI parses them
-# and does not run them.
+# The example reads a live Forgejo instance over the network (Codeberg,
+# anonymously, unless FORGEJO_URL is set), so CI parses it and does not run
+# it: CI must not depend on a third-party service being up.
 exec env EXAMPLES_SKIP_RUN=1 tools/check-examples-shared.sh "$@"
