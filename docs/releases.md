@@ -58,8 +58,8 @@ def newest as forgejo.Tag init forgejo.tags($c, "me/app")[0];
 content; `writeFile` commits a new version, or the first one:
 
 ```jennifer
-def v as string init convert.stringFromBytes(forgejo.readFile($c, "me/app", "VERSION", "main"), "utf-8");
-forgejo.writeFile($c, "me/app", "VERSION", convert.bytesFromString("1.2.1", "utf-8"), "bump to 1.2.1", "main");
+def v as string init convert.stringFromBytes("utf-8", forgejo.readFile($c, "me/app", "VERSION", "main"));
+forgejo.writeFile($c, "me/app", "VERSION", convert.bytesFromString("utf-8", "1.2.1"), "bump to 1.2.1", "main");
 ```
 
 Each `writeFile` is a commit of its own, and returns its SHA. It reads the

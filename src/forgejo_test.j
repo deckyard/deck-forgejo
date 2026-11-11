@@ -165,7 +165,7 @@ func tokenClient(f as Fake) {
  * @return {json.Value} the body
  */
 func bodyOf(s as Seen) {
-    return json.decode(convert.stringFromBytes($s.body, "utf-8"));
+    return json.decode(convert.stringFromBytes("utf-8", $s.body));
 }
 
 /**
@@ -222,7 +222,7 @@ func testClientSettings() {
     testing.assertTrue($c.tls.skipVerify);
     testing.assertEqual($c.timeoutMs, 5000);
     testing.assertEqual($c.retries, 2);
-    $c = withCaCert($c, convert.bytesFromString("PEM", "utf-8"));
+    $c = withCaCert($c, convert.bytesFromString("utf-8", "PEM"));
     testing.assertFalse($c.tls.skipVerify);
     testing.assertEqual(withToken($c, "abc").token, "abc");
     try {
@@ -537,7 +537,7 @@ func testReleasesAndAssets() {
         "me/app",
         5,
         "app.zip",
-        convert.bytesFromString("zip", "utf-8"));
+        convert.bytesFromString("utf-8", "zip"));
     testing.assertEqual($a.id, 10);
     deleteRelease($c, "me/app", 5);
     # The asset URL points at the fake server's old port, not this client's.
@@ -549,7 +549,7 @@ func testReleasesAndAssets() {
     }
     def local as Asset init $got[0].assets[0];
     $local.downloadUrl = $c.url + "/me/app/releases/download/1.2.0/app.tar.gz";
-    testing.assertEqual(convert.stringFromBytes(downloadAsset($c, $local, 0), "utf-8"), "BINARY");
+    testing.assertEqual(convert.stringFromBytes("utf-8", downloadAsset($c, $local, 0)), "BINARY");
     def seen as list of Seen init finish($g);
     testing.assertEqual($seen[1].path, "/api/v1/repos/me/app/releases/tags/1.2.0");
     testing.assertEqual(
@@ -591,9 +591,9 @@ func testFiles() {
     ]);
     def c as Client init tokenClient($f);
     testing.assertEqual(
-        convert.stringFromBytes(readFile($c, "me/app", "docs/a b.md", "dev"), "utf-8"),
+        convert.stringFromBytes("utf-8", readFile($c, "me/app", "docs/a b.md", "dev")),
         "hello");
-    def data as bytes init convert.bytesFromString("hello", "utf-8");
+    def data as bytes init convert.bytesFromString("utf-8", "hello");
     testing.assertEqual(writeFile($c, "me/app", "data/v.txt", $data, "add v", ""), "c1");
     testing.assertEqual(writeFile($c, "me/app", "data/v.txt", $data, "bump v", "dev"), "c2");
     # Only a 404 for the file itself means create; this one is no 404.

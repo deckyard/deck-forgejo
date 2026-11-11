@@ -1572,7 +1572,7 @@ func fetchBytes(c as Client, url as string, maxBytes as int) {
     if ($r.status < 200 or $r.status >= 300) {
         fail(
             "GET " + $url + ": " +
-                failureText($r.status, $r.statusText, convert.stringFromBytes($r.body, "utf-8")));
+                failureText($r.status, $r.statusText, convert.stringFromBytes("utf-8", $r.body)));
     }
     return $r.body;
 }
@@ -1696,7 +1696,7 @@ export func writeFile(
         }
     }
     def fields as map of string to string init {
-        "content": encoding.toText($data, "base64"),
+        "content": encoding.toText("base64", $data),
         "message": $message,
         "branch": $branch,
         "sha": $sha
