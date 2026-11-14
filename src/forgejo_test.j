@@ -758,7 +758,7 @@ func testCommitStatuses() {
         '"target_url":"https://ci/1","creator":{"login":"bot"},"created_at":"t"}';
     def f as Fake init fake([
         ok($status),
-        pageOf("[" + $status + "]", 1),
+        pageOf("[" + strings.replace($status, '{"context"', '{"id":1,"context"') + "]", 1),
         ok('{"state":"failure","statuses":[' + $status + ']}')
     ]);
     def c as Client init tokenClient($f);
@@ -790,6 +790,37 @@ func testCommitStatuses() {
     } catch (e) {
         testing.assertContains(messageOf($e), "a commit status is one of pending");
     }
+}
+
+# Forgejo orders statuses by time to the second, same-second ones oldest
+# first (as Codeberg answered); the deck orders them by id, newest first.
+func testCommitStatusesNewestFirstById() {
+    def f as Fake init fake([
+        pageOf(
+            '[{"id":5,"context":"e","status":"success","created_at":"2026-11-14T04:10:29+01:00"},' +
+                '{"id":3,"context":"c","status":"pending","created_at":"2026-11-14T04:09:23+01:00"},' +
+                '{"id":4,"context":"d","status":"pending","created_at":"2026-11-14T04:09:23+01:00"}]',
+            1),
+        pageOf('[{"context":"x","status":"success"}]', 1),
+        pageOf(
+            '[{"id":2,"context":"x","status":"success"},{"id":2,"context":"y","status":"success"}]',
+            1)
+    ]);
+    def c as Client init tokenClient($f);
+    def got as list of string init [];
+    for (def s in commitStatuses($c, "me/app", "main")) {
+        $got[] = $s.context;
+    }
+    testing.assertEqual($got, ["e", "d", "c"]);
+    for (def k in 0..2) {
+        try {
+            commitStatuses($c, "me/app", "main");
+            missed();
+        } catch (e) {
+            testing.assertContains(messageOf($e), "a status without a distinct id");
+        }
+    }
+    finish($f);
 }
 
 func testCommits() {

@@ -1898,7 +1898,9 @@ export func setCommitStatus(
 }
 
 /**
- * The statuses set on a commit, newest first.
+ * The statuses set on a commit, newest first. Forgejo orders them by time
+ * to the second and lists same-second ones oldest first (seen on Codeberg),
+ * so the deck orders them by id, which grows with each status set.
  *
  * @param c {Client} the client
  * @param repo {string} `owner/name`
@@ -1910,8 +1912,16 @@ export func commitStatuses(c as Client, repo as string, ref as string) {
     segments($ref, "ref");
     def out as list of CommitStatus init [];
     def path as string init repoPath($repo) + "/commits/" + uri.encode($ref) + "/statuses";
+    def byId as map of int to CommitStatus init {};
     for (def d in getAll($c, $path)) {
-        $out[] = statusFrom($d, "");
+        def id as int init numberAt($d, "/id");
+        if ($id < 1 or maps.has($byId, $id)) {
+            fail("GET " + $path + ": a status without a distinct id");
+        }
+        $byId[$id] = statusFrom($d, "");
+    }
+    for (def id in lists.reverse(lists.sort(maps.keys($byId)))) {
+        $out[] = $byId[$id];
     }
     return $out;
 }

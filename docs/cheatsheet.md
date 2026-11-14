@@ -360,7 +360,7 @@ Every error of kind `"forgejo"`.
 | `forgejo.commits(c, repo, ref, path)` | `list of Commit` | commits from a ref; `path` narrows them |
 | `forgejo.commit(c, repo, sha)` | `Commit` | one commit |
 | `forgejo.setCommitStatus(c, repo, sha, state, context, description, targetUrl)` | `CommitStatus` | report a check on a commit |
-| `forgejo.commitStatuses(c, repo, ref)` | `list of CommitStatus` | every status set on it |
+| `forgejo.commitStatuses(c, repo, ref)` | `list of CommitStatus` | every status set on it, newest first |
 | `forgejo.combinedStatus(c, repo, ref)` | `CombinedStatus` | the latest per check, and the worst |
 | `forgejo.dispatchWorkflow(c, repo, workflow, ref, inputs)` | `int` | run a workflow; the run id |
 | `forgejo.setSecret(c, repo, name, value)` | | create or replace an Actions secret |
