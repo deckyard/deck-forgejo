@@ -1,6 +1,6 @@
 [package]
 name = "@deckyard/forgejo"
-version = "0.2.1"
+version = "0.3.0"
 description = "A client for the Forgejo REST API: repositories, issues, pull requests, releases with assets, branches, tags and files"
 license = "LGPL-3.0-only"
 authors = ["mplx <mplx@jennifer-lang.dev>"]
