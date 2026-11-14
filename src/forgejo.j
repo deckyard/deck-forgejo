@@ -62,13 +62,16 @@ export def const MERGE_STYLES as list of string init [
  * @field tls {http.TlsOptions} certificate checking
  * @field timeoutMs {int} the idle timeout of each request; 0 for 30 s
  * @field retries {int} retries of a GET answered 429 or 5xx
+ * @field allowPlainHttp {bool} whether plain `http` to another machine is
+ *   allowed (the token then crosses the network in clear)
  */
 export def struct Client {
     url as string,
     token as string,
     tls as http.TlsOptions,
     timeoutMs as int,
-    retries as int
+    retries as int,
+    allowPlainHttp as bool
 };
 
 /**
@@ -454,6 +457,9 @@ def const REASON as int init 200;
 # The idle timeout a `timeoutMs` of 0 stands for, as `http.send` has it.
 def const DEFAULT_TIMEOUT_MS as int init 30000;
 
+# The hosts plain http is allowed to without `withPlainHttp`: this machine.
+def const LOOPBACK as list of string init ["127.0.0.1", "localhost", "[::1]"];
+
 /**
  * A failed request or a refused value. Every error of kind `"forgejo"` is one,
  * so its fields are safe to read once the kind matches.
@@ -546,7 +552,9 @@ func baseUrl(address as string) {
 }
 
 /**
- * A client for an instance, without a token.
+ * A client for an instance, without a token. Plain `http://` to another
+ * machine than this one (`127.0.0.1`, `::1`, `localhost`) is refused when a
+ * request is sent: add `withPlainHttp` for such an instance.
  *
  * @param address {string} host name, `host:port` or a full URL; a Forgejo
  *   below a path, such as `https://example.com/git`, keeps the path
@@ -554,11 +562,44 @@ func baseUrl(address as string) {
  * @throws {ForgejoError} kind `"forgejo"` when the address is empty
  * @example
  *   def c as forgejo.Client init forgejo.client("codeberg.org");
+ *   $c = forgejo.withPlainHttp(forgejo.client("http://git.lan:3000"));
  */
 export func client(address as string) {
     def c as Client;
     $c.url = baseUrl($address);
     return $c;
+}
+
+/**
+ * The client allowed to use plain `http` to another machine, such as an
+ * instance on the LAN without TLS. The token crosses the network in clear.
+ *
+ * @param c {Client} the client
+ * @return {Client} the changed copy
+ * @example
+ *   def c as forgejo.Client init forgejo.withPlainHttp(forgejo.client("http://git.lan:3000"));
+ */
+export func withPlainHttp(c as Client) {
+    $c.allowPlainHttp = true;
+    return $c;
+}
+
+/**
+ * Refuse plain http to another machine unless `withPlainHttp` allowed it.
+ * Run before every request, so a refused client sends nothing, the token
+ * included.
+ *
+ * @param c {Client} the client
+ */
+func checkPlain(c as Client) {
+    if (strings.startsWith(strings.lower($c.url), "http://") and not $c.allowPlainHttp) {
+        def m as regex.Match init regex.find('^[^:]*://(\[[0-9A-Fa-f:.]+\]|[^:/]+)', $c.url);
+        def host as string init strings.lower($m.groups[0]);
+        if (not lists.contains(LOOPBACK, $host)) {
+            fail("plain http to " + shown($host) +
+                " would send the token in clear: use https, or withPlainHttp");
+        }
+    }
 }
 
 /**
@@ -771,6 +812,7 @@ func exchange(c as Client, method as string, path as string, body as string) {
         fail("unsupported method " + shown($method));
     }
     ensurePath($path);
+    checkPlain($c);
     def headers as map of string to string init authHeaders($c);
     if ($body != "") {
         $headers["Content-Type"] = "application/json";
@@ -1586,6 +1628,7 @@ export func uploadAsset(
     def built as multipart.Built init multipart.build([
         multipart.file("attachment", $name, "application/octet-stream", $data)
     ]);
+    checkPlain($c);
     def headers as map of string to string init authHeaders($c);
     $headers["Content-Type"] = $built.contentType;
     def r as http.Response;
@@ -1637,6 +1680,7 @@ def const MAX_REDIRECTS as int init 5;
  * @return {bytes} the body
  */
 func fetchBytes(c as Client, url as string, maxBytes as int) {
+    checkPlain($c);
     def cur as string init $url;
     def hops as int init 0;
     def r as http.BytesResponse;

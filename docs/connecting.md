@@ -17,6 +17,17 @@ $c = forgejo.client("http://localhost:3000");       # a local test instance
 A self-hosted instance with its own CA is trusted with `withCaCert`;
 `withInsecure` turns certificate checking off.
 
+Plain `http://` is for this machine only (`127.0.0.1`, `::1`,
+`localhost`). An instance elsewhere without TLS needs `withPlainHttp`, and
+the token then crosses the network in clear:
+
+```jennifer
+$c = forgejo.withPlainHttp(forgejo.client("http://git.lan:3000"));
+```
+
+Without it `client` still builds the client, but every request fails
+before anything is sent (kind `"forgejo"`, status 0).
+
 ## Tokens
 
 Create a token under Settings > Applications and give it only the scopes the

@@ -46,6 +46,7 @@ Every error of kind `"forgejo"`.
 | `tls as http.TlsOptions` | certificate checking |
 | `timeoutMs as int` | idle timeout per request; 0 for 30 s |
 | `retries as int` | retries of a GET answered 429 or 5xx |
+| `allowPlainHttp as bool` | whether plain `http` to another machine is allowed (the token then crosses the network in clear) |
 
 ### `User`
 
@@ -261,7 +262,8 @@ Every error of kind `"forgejo"`.
 
 | Function | Returns | Does |
 |---|---|---|
-| `forgejo.client(address)` | `Client` | a client for an instance, without a token |
+| `forgejo.client(address)` | `Client` | a client for an instance, without a token; requests refuse plain http to another machine |
+| `forgejo.withPlainHttp(c)` | `Client` | allow plain http to another machine (an instance on the LAN) |
 | `forgejo.withToken(c, token)` | `Client` | authenticate with an access token |
 | `forgejo.withCaCert(c, pem)` | `Client` | trust a certificate |
 | `forgejo.withInsecure(c)` | `Client` | accept any certificate |

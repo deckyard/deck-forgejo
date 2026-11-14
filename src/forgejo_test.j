@@ -1163,3 +1163,63 @@ func testLocalFailuresAndCaps() {
         testing.assertEqual($e.status, 0);
     }
 }
+
+# Plain http goes only to this machine unless withPlainHttp allows another;
+# `client` accepts the address, every kind of request refuses it before
+# anything (the token included) is sent.
+func testPlainHttpOnlyToThisMachine() {
+    def lan as Client init withToken(client("http://git.lan:3000"), "t0k3n");
+    testing.assertFalse($lan.allowPlainHttp);
+    def refusal as string init
+        "forgejo: plain http to \"git.lan\" would send the token in clear: " +
+        "use https, or withPlainHttp";
+    try {
+        repository($lan, "me/app");
+        missed();
+    } catch (e) {
+        testing.assertEqual($e.status, 0);
+        testing.assertEqual(messageOf($e), $refusal);
+    }
+    try {
+        readFile($lan, "me/app", "README.md", "");
+        missed();
+    } catch (e) {
+        testing.assertEqual(messageOf($e), $refusal);
+    }
+    try {
+        uploadAsset($lan, "me/app", 5, "a.zip", convert.bytesFromString("utf-8", "x"));
+        missed();
+    } catch (e) {
+        testing.assertEqual(messageOf($e), $refusal);
+    }
+    def asset as Asset init Asset{
+        id: 1,
+        name: "x",
+        size: 1,
+        downloads: 0,
+        downloadUrl: $lan.url + "/attachments/x"
+    };
+    try {
+        downloadAsset($lan, $asset, 0);
+        missed();
+    } catch (e) {
+        testing.assertEqual(messageOf($e), $refusal);
+    }
+    def allowed as Client init withPlainHttp(client("http://git.lan:3000"));
+    testing.assertTrue($allowed.allowPlainHttp);
+    checkPlain($allowed);
+    for (def here in [
+        "http://127.0.0.1:3000",
+        "http://localhost:3000/git",
+        "http://[::1]:3000",
+        "HTTP://LocalHost",
+        "git.lan",
+        "https://git.lan"
+    ]) {
+        checkPlain(client($here));
+    }
+    # The fake listens on 127.0.0.1: a request there needs no withPlainHttp.
+    def f as Fake init fake([ok(REPO)]);
+    testing.assertEqual(repository(tokenClient($f), "me/app").fullName, "me/app");
+    finish($f);
+}
