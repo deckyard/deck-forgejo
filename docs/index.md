@@ -34,13 +34,29 @@ A repository is named `owner/name`: `"forgejo/forgejo"`. Times are the RFC
 
 ## Errors
 
-Every failure is `Error{kind: "forgejo"}`. The message names the request,
-the HTTP status and Forgejo's reason:
+Every failure is a `forgejo.ForgejoError` (kind `"forgejo"`). The message names
+the request, the HTTP status and Forgejo's reason, and the status is the
+`status` field, so a handler branches on it rather than on the text:
 
 ```text
 forgejo: GET /repos/me/missing: HTTP 404: The target couldn't be found.
 forgejo: POST /user/repos: HTTP 409: The repository with the same name already exists.
 ```
+
+```jennifer
+try {
+    def r as forgejo.Repository init forgejo.repository($c, "me/missing");
+} catch (e) {
+    if ($e.kind == "forgejo" and $e.status == 404) {
+        io.printf("no such repository\n");
+    } else {
+        throw $e;
+    }
+}
+```
+
+A list past `MAX_PAGES` pages, or a reply over its size cap, is kind `"limit"`
+instead (a plain `Error`).
 
 ## Requirements
 

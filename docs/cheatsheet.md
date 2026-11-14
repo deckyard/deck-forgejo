@@ -10,8 +10,9 @@ Every export of `@deckyard/forgejo`. Guides are listed in
 import "@deckyard/forgejo/" as forgejo;
 ```
 
-Every function that sends a request throws `Error{kind: "forgejo"}` when it
-fails. A `repo` is `owner/name`; a `number` is an issue or pull request
+Every function that sends a request throws a `ForgejoError` (kind `"forgejo"`,
+with the HTTP `status`) when it fails; a list past `MAX_PAGES` pages or a reply
+over its size cap is kind `"limit"`. A `repo` is `owner/name`; a `number` is an issue or pull request
 number.
 
 ## Constants
@@ -24,6 +25,16 @@ number.
 | `MERGE_STYLES` | `["merge", "rebase", "rebase-merge", "squash", "fast-forward-only"]` | the ways to merge a pull request |
 
 ## Types
+
+### `ForgejoError`
+
+Every error of kind `"forgejo"`.
+
+| Field | Meaning |
+|---|---|
+| `kind as string` | always `"forgejo"` |
+| `message as string` | `forgejo: <verb> <path>: HTTP <status>: <reason>`, or what went wrong |
+| `status as int` | the HTTP status the instance answered; 0 when none was read or for a local check |
 
 ### `Client`
 

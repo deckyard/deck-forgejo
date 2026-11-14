@@ -44,7 +44,7 @@ forgejo.call($c, "POST", "/repos/me/app/labels", '{"name":"bug","color":"#ee0701
 `getAll` reads every page of a list. Forgejo caps a page at 50 entries by
 default and reports the total in `X-Total-Count`; `getAll` follows it, so a
 server with a smaller page size is read completely too. It refuses to go
-past `MAX_PAGES` pages.
+past `MAX_PAGES` pages (an error of kind `"limit"`).
 
 ```jennifer
 for (def hook in forgejo.getAll($c, "/repos/me/app/hooks")) {

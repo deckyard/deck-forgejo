@@ -12,7 +12,9 @@
  * files. Gitea speaks the same API, so most of it works there too.
  *
  * A `Client` authenticates with an access token (`withToken`). Every
- * failure is `Error{kind: "forgejo"}`.
+ * failure is a `ForgejoError` (kind `"forgejo"`) carrying the HTTP `status`
+ * the instance answered, except that a listing past `MAX_PAGES` pages or a
+ * reply over its size cap is kind `"limit"`.
  *
  * @module forgejo
  * @see https://forgejo.org/docs/latest/user/api-usage/
@@ -447,8 +449,37 @@ def const REASON as int init 200;
 # The idle timeout a `timeoutMs` of 0 stands for, as `http.send` has it.
 def const DEFAULT_TIMEOUT_MS as int init 30000;
 
+/**
+ * A failed request or a refused value. Every error of kind `"forgejo"` is one,
+ * so its fields are safe to read once the kind matches.
+ *
+ * @field kind {string} always `"forgejo"` (`ERROR_KIND`)
+ * @field message {string} `forgejo: ` and what failed, for a refused request `<verb> <path>: HTTP <status>: <reason>`
+ * @field status {int} the HTTP status the instance answered (401, 403, 404, 409, 422, ...); 0 when no answer was read or the failure is a local check
+ */
+export def struct ForgejoError {
+    kind as string,
+    message as string,
+    status as int
+};
+
 func fail(message as string) {
-    throw Error{kind: ERROR_KIND, message: "forgejo: " + $message};
+    failStatus($message, 0);
+}
+
+# failStatus throws the ForgejoError of a refused request, with its status.
+func failStatus(message as string, status as int) {
+    throw ForgejoError{kind: ERROR_KIND, message: "forgejo: " + $message, status: $status};
+}
+
+# failTransport throws the error of a request that got no usable answer: a
+# reached cap (an `http` body cap) stays kind "limit", anything else is a
+# ForgejoError; the message is `forgejo: <verb> <path>: <cause>` either way.
+func failTransport(what as string, e as Error) {
+    if ($e.kind == "limit") {
+        throw Error{kind: "limit", message: "forgejo: " + $what + ": " + $e.message};
+    }
+    fail($what + ": " + $e.message);
 }
 
 /**
@@ -510,7 +541,7 @@ func baseUrl(address as string) {
  * @param address {string} host name, `host:port` or a full URL; a Forgejo
  *   below a path, such as `https://example.com/git`, keeps the path
  * @return {Client} the client; full certificate checking
- * @throws {Error} kind `"forgejo"` when the address is empty
+ * @throws {ForgejoError} kind `"forgejo"` when the address is empty
  * @example
  *   def c as forgejo.Client init forgejo.client("codeberg.org");
  */
@@ -527,7 +558,7 @@ export func client(address as string) {
  * @param c {Client} the client
  * @param token {string} the token
  * @return {Client} the changed copy
- * @throws {Error} kind `"forgejo"` when the token holds spaces or control
+ * @throws {ForgejoError} kind `"forgejo"` when the token holds spaces or control
  *   characters
  */
 export func withToken(c as Client, token as string) {
@@ -737,10 +768,12 @@ func exchange(c as Client, method as string, path as string, body as string) {
     try {
         $r = http.send($verb, $c.url + "/api/v1" + $path, $headers, $body, $o);
     } catch (e) {
-        fail($verb + " " + $path + ": " + $e.message);
+        failTransport($verb + " " + $path, $e);
     }
     if ($r.status < 200 or $r.status >= 300) {
-        fail($verb + " " + $path + ": " + failureText($r.status, $r.statusText, $r.body));
+        failStatus(
+            $verb + " " + $path + ": " + failureText($r.status, $r.statusText, $r.body),
+            $r.status);
     }
     return $r;
 }
@@ -813,7 +846,7 @@ func decoded(body as string, what as string) {
  *   `/repos/forgejo/forgejo/labels?limit=10`
  * @param body {string} the JSON body; "" for none
  * @return {json.Value} the reply; JSON `null` when it is empty
- * @throws {Error} kind `"forgejo"` on a bad path, a network failure or a
+ * @throws {ForgejoError} kind `"forgejo"` on a bad path, a network failure or a
  *   reply that is not 2xx; the message names the status and Forgejo's reason
  * @example
  *   def labels as json.Value init forgejo.call($c, "GET", "/repos/me/app/labels", "");
@@ -831,8 +864,8 @@ export func call(c as Client, method as string, path as string, body as string) 
  * @param path {string} the path under `/api/v1`, query string allowed;
  *   `page` and `limit` are added
  * @return {list of json.Value} the entries
- * @throws {Error} kind `"forgejo"` as `call`, when an answer is not a list,
- *   or past `MAX_PAGES` pages
+ * @throws {ForgejoError} kind `"forgejo"` as `call`, or when an answer is not a list
+ * @throws {Error} kind `"limit"` past `MAX_PAGES` pages
  */
 export func getAll(c as Client, path as string) {
     def out as list of json.Value init [];
@@ -844,7 +877,11 @@ export func getAll(c as Client, path as string) {
     def more as bool init true;
     while ($more) {
         if ($page > MAX_PAGES) {
-            fail("GET " + $path + ": more than " + convert.toString(MAX_PAGES) + " pages");
+            throw Error{
+                kind: "limit",
+                message: "forgejo: GET " + $path + ": more than " + convert.toString(MAX_PAGES) +
+                    " pages"
+            };
         }
         def url as string init $path + $sep + "limit=" + convert.toString(PAGE_SIZE) +
             "&page=" + convert.toString($page);
@@ -912,7 +949,7 @@ func objectOf(fields as map of string to string, flags as map of string to bool)
  *
  * @param c {Client} the client
  * @return {string} e.g. `9.0.0+gitea-1.22.0`
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func version(c as Client) {
     return field(call($c, "GET", "/version", ""), "/version");
@@ -940,7 +977,7 @@ func userFrom(d as json.Value, p as string) {
  *
  * @param c {Client} the client
  * @return {User} the account
- * @throws {Error} kind `"forgejo"` without a valid token, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` without a valid token, or as `call`
  */
 export func currentUser(c as Client) {
     return userFrom(call($c, "GET", "/user", ""), "");
@@ -978,7 +1015,7 @@ func repositoryFrom(d as json.Value) {
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @return {Repository} the repository
- * @throws {Error} kind `"forgejo"` when it does not exist or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` when it does not exist or as `call`
  */
 export func repository(c as Client, repo as string) {
     return repositoryFrom(call($c, "GET", repoPath($repo), ""));
@@ -990,7 +1027,7 @@ export func repository(c as Client, repo as string) {
  * @param c {Client} the client
  * @param owner {string} a user or organization
  * @return {list of Repository} the repositories
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func repositories(c as Client, owner as string) {
     def out as list of Repository init [];
@@ -1006,7 +1043,7 @@ export func repositories(c as Client, owner as string) {
  *
  * @param c {Client} the client
  * @return {list of Repository} the repositories
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func myRepositories(c as Client) {
     def out as list of Repository init [];
@@ -1025,7 +1062,7 @@ export func myRepositories(c as Client) {
  * @param description {string} the description; "" for none
  * @param isPrivate {bool} whether it is private
  * @return {Repository} the new repository
- * @throws {Error} kind `"forgejo"` when the name is taken or not allowed
+ * @throws {ForgejoError} kind `"forgejo"` when the name is taken or not allowed
  */
 export func createRepository(
     c as Client,
@@ -1050,7 +1087,7 @@ export func createRepository(
  *
  * @param c {Client} the client
  * @param repo {string} `owner/name`
- * @throws {Error} kind `"forgejo"` when the token may not, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` when the token may not, or as `call`
  */
 export func deleteRepository(c as Client, repo as string) {
     call($c, "DELETE", repoPath($repo), "");
@@ -1116,7 +1153,7 @@ func checkState(state as string) {
  * @param repo {string} `owner/name`
  * @param state {string} `open`, `closed` or `all`
  * @return {list of Issue} the issues
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func issues(c as Client, repo as string, state as string) {
     def out as list of Issue init [];
@@ -1134,7 +1171,7 @@ export func issues(c as Client, repo as string, state as string) {
  * @param repo {string} `owner/name`
  * @param number {int} the issue number
  * @return {Issue} the issue
- * @throws {Error} kind `"forgejo"` when it does not exist or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` when it does not exist or as `call`
  */
 export func issue(c as Client, repo as string, number as int) {
     return issueFrom(call($c, "GET", repoPath($repo) + "/issues/" + convert.toString($number), ""));
@@ -1148,7 +1185,7 @@ export func issue(c as Client, repo as string, number as int) {
  * @param title {string} the title
  * @param body {string} the text, Markdown; "" for none
  * @return {Issue} the new issue
- * @throws {Error} kind `"forgejo"` on an empty title or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on an empty title or as `call`
  */
 export func createIssue(c as Client, repo as string, title as string, body as string) {
     if (strings.trim($title) == "") {
@@ -1179,7 +1216,7 @@ func setIssueState(c as Client, repo as string, number as int, state as string) 
  * @param repo {string} `owner/name`
  * @param number {int} its number
  * @return {Issue} the closed issue
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func closeIssue(c as Client, repo as string, number as int) {
     return setIssueState($c, $repo, $number, "closed");
@@ -1192,7 +1229,7 @@ export func closeIssue(c as Client, repo as string, number as int) {
  * @param repo {string} `owner/name`
  * @param number {int} its number
  * @return {Issue} the reopened issue
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func reopenIssue(c as Client, repo as string, number as int) {
     return setIssueState($c, $repo, $number, "open");
@@ -1221,7 +1258,7 @@ func commentFrom(d as json.Value) {
  * @param repo {string} `owner/name`
  * @param number {int} its number
  * @return {list of Comment} the comments
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func comments(c as Client, repo as string, number as int) {
     def out as list of Comment init [];
@@ -1241,7 +1278,7 @@ export func comments(c as Client, repo as string, number as int) {
  * @param number {int} its number
  * @param body {string} the text, Markdown
  * @return {Comment} the new comment
- * @throws {Error} kind `"forgejo"` on an empty text or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on an empty text or as `call`
  */
 export func comment(c as Client, repo as string, number as int, body as string) {
     if (strings.trim($body) == "") {
@@ -1298,7 +1335,7 @@ func headOf(d as json.Value) {
  * @param repo {string} `owner/name`
  * @param state {string} `open`, `closed` or `all`
  * @return {list of PullRequest} the pull requests
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func pullRequests(c as Client, repo as string, state as string) {
     def out as list of PullRequest init [];
@@ -1315,7 +1352,7 @@ export func pullRequests(c as Client, repo as string, state as string) {
  * @param repo {string} `owner/name`
  * @param number {int} its number
  * @return {PullRequest} the pull request
- * @throws {Error} kind `"forgejo"` when it does not exist or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` when it does not exist or as `call`
  */
 export func pullRequest(c as Client, repo as string, number as int) {
     return pullFrom(call($c, "GET", repoPath($repo) + "/pulls/" + convert.toString($number), ""));
@@ -1331,7 +1368,7 @@ export func pullRequest(c as Client, repo as string, number as int) {
  * @param title {string} the title
  * @param body {string} the text, Markdown; "" for none
  * @return {PullRequest} the new pull request
- * @throws {Error} kind `"forgejo"` on an empty title or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on an empty title or as `call`
  */
 export func createPullRequest(
     c as Client,
@@ -1357,7 +1394,7 @@ export func createPullRequest(
  * @param number {int} its number
  * @param style {string} one of `MERGE_STYLES`
  * @param deleteBranch {bool} delete the head branch afterwards
- * @throws {Error} kind `"forgejo"` on an unknown style, when the pull
+ * @throws {ForgejoError} kind `"forgejo"` on an unknown style, when the pull
  *   request cannot be merged (HTTP 405) or its head moved (HTTP 409)
  */
 export func mergePullRequest(
@@ -1422,7 +1459,7 @@ func releaseFrom(d as json.Value) {
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @return {list of Release} the releases
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func releases(c as Client, repo as string) {
     def out as list of Release init [];
@@ -1439,7 +1476,7 @@ export func releases(c as Client, repo as string) {
  * @param repo {string} `owner/name`
  * @param tag {string} the tag, e.g. `1.2.0`
  * @return {Release} the release
- * @throws {Error} kind `"forgejo"` when there is none or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` when there is none or as `call`
  */
 export func release(c as Client, repo as string, tag as string) {
     return releaseFrom(call($c, "GET", tagPath($repo, $tag), ""));
@@ -1470,7 +1507,7 @@ func tagPath(repo as string, tag as string) {
  * @param body {string} the notes, Markdown; "" for none
  * @param isPrerelease {bool} mark it as a pre-release
  * @return {Release} the new release
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func createRelease(
     c as Client,
@@ -1498,7 +1535,7 @@ export func createRelease(
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @param id {int} the release id
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func deleteRelease(c as Client, repo as string, id as int) {
     call($c, "DELETE", repoPath($repo) + "/releases/" + convert.toString($id), "");
@@ -1513,7 +1550,7 @@ export func deleteRelease(c as Client, repo as string, id as int) {
  * @param name {string} the file name
  * @param data {bytes} the content
  * @return {Asset} the new asset
- * @throws {Error} kind `"forgejo"` on a bad name, a network failure or a
+ * @throws {ForgejoError} kind `"forgejo"` on a bad name, a network failure or a
  *   refusal
  */
 export func uploadAsset(
@@ -1543,10 +1580,12 @@ export func uploadAsset(
             0,
             $c.tls);
     } catch (e) {
-        fail("POST " + $path + ": " + $e.message);
+        failTransport("POST " + $path, $e);
     }
     if ($r.status < 200 or $r.status >= 300) {
-        fail("POST " + $path + ": " + failureText($r.status, $r.statusText, $r.body));
+        failStatus(
+            "POST " + $path + ": " + failureText($r.status, $r.statusText, $r.body),
+            $r.status);
     }
     return assetFrom(decoded($r.body, "POST " + $path), "");
 }
@@ -1567,12 +1606,13 @@ func fetchBytes(c as Client, url as string, maxBytes as int) {
     try {
         $r = http.requestWithBytes("GET", $url, $headers, "", idleMs($c), $maxBytes, $c.tls);
     } catch (e) {
-        fail("GET " + $url + ": " + $e.message);
+        failTransport("GET " + $url, $e);
     }
     if ($r.status < 200 or $r.status >= 300) {
-        fail(
+        failStatus(
             "GET " + $url + ": " +
-                failureText($r.status, $r.statusText, convert.stringFromBytes("utf-8", $r.body)));
+                failureText($r.status, $r.statusText, convert.stringFromBytes("utf-8", $r.body)),
+            $r.status);
     }
     return $r.body;
 }
@@ -1586,7 +1626,7 @@ func fetchBytes(c as Client, url as string, maxBytes as int) {
  * @param maxBytes {int} the largest file accepted; 0 for 64 MiB, negative
  *   for no limit
  * @return {bytes} the content
- * @throws {Error} kind `"forgejo"` on a foreign URL, a network failure or a
+ * @throws {ForgejoError} kind `"forgejo"` on a foreign URL, a network failure or a
  *   file over `maxBytes`
  */
 export func downloadAsset(c as Client, asset as Asset, maxBytes as int) {
@@ -1603,7 +1643,7 @@ export func downloadAsset(c as Client, asset as Asset, maxBytes as int) {
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @return {list of Branch} the branches
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func branches(c as Client, repo as string) {
     def out as list of Branch init [];
@@ -1623,7 +1663,7 @@ export func branches(c as Client, repo as string) {
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @return {list of Tag} the tags
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func tags(c as Client, repo as string) {
     def out as list of Tag init [];
@@ -1646,7 +1686,7 @@ export func tags(c as Client, repo as string) {
  * @param path {string} the file, e.g. `docs/index.md`
  * @param ref {string} a branch, tag or commit; "" for the default branch
  * @return {bytes} the content
- * @throws {Error} kind `"forgejo"` when it does not exist, on a network
+ * @throws {ForgejoError} kind `"forgejo"` when it does not exist, on a network
  *   failure, or for a file over 64 MiB
  */
 export func readFile(c as Client, repo as string, path as string, ref as string) {
@@ -1668,7 +1708,7 @@ export func readFile(c as Client, repo as string, path as string, ref as string)
  * @param message {string} the commit message
  * @param branch {string} the branch to commit to; "" for the default branch
  * @return {string} the new commit's SHA
- * @throws {Error} kind `"forgejo"` on an empty message, a bad path or as
+ * @throws {ForgejoError} kind `"forgejo"` on an empty message, a bad path or as
  *   `call`
  */
 export func writeFile(
@@ -1691,7 +1731,8 @@ export func writeFile(
     try {
         $sha = field(call($c, "GET", $file + $query, ""), "/sha");
     } catch (e) {
-        if (not strings.startsWith($e.message, "forgejo: GET " + $file + $query + ": HTTP 404")) {
+        # a missing file is a 404 for this GET; anything else is a failure
+        if ($e.kind != ERROR_KIND or $e.status != 404) {
             throw $e;
         }
     }
@@ -1767,7 +1808,7 @@ func statusFrom(d as json.Value, p as string) {
  * @param description {string} a short text; "" for none
  * @param targetUrl {string} where the details are; "" for none
  * @return {CommitStatus} the status
- * @throws {Error} kind `"forgejo"` on another state, a bad SHA, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on another state, a bad SHA, or as `call`
  * @example
  *   forgejo.setCommitStatus($c, "me/app", $sha, "success", "ci/build", "built in 42 s", $logUrl);
  */
@@ -1802,7 +1843,7 @@ export func setCommitStatus(
  * @param repo {string} `owner/name`
  * @param ref {string} a commit SHA, branch or tag
  * @return {list of CommitStatus} the statuses
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func commitStatuses(c as Client, repo as string, ref as string) {
     segments($ref, "ref");
@@ -1822,7 +1863,7 @@ export func commitStatuses(c as Client, repo as string, ref as string) {
  * @param repo {string} `owner/name`
  * @param ref {string} a commit SHA, branch or tag
  * @return {CombinedStatus} the combined status
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func combinedStatus(c as Client, repo as string, ref as string) {
     segments($ref, "ref");
@@ -1865,7 +1906,7 @@ func commitFrom(d as json.Value) {
  * @param path {string} only commits that touch this file or directory; ""
  *   for all
  * @return {list of Commit} the commits
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func commits(c as Client, repo as string, ref as string, path as string) {
     def query as string init repoPath($repo) + "/commits?stat=false&verification=false&files=false";
@@ -1890,7 +1931,7 @@ export func commits(c as Client, repo as string, ref as string, path as string) 
  * @param repo {string} `owner/name`
  * @param sha {string} the commit SHA, or a branch or tag
  * @return {Commit} the commit
- * @throws {Error} kind `"forgejo"` when there is none, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` when there is none, or as `call`
  */
 export func commit(c as Client, repo as string, sha as string) {
     def path as string init repoPath($repo) + "/git/commits/" +
@@ -1908,7 +1949,7 @@ export func commit(c as Client, repo as string, sha as string) {
  * @param ref {string} the branch or tag to run it on
  * @param inputs {map of string to string} the workflow's inputs; `{}` for none
  * @return {int} the run's id; 0 when the instance does not report it
- * @throws {Error} kind `"forgejo"` on a bad name, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on a bad name, or as `call`
  */
 export func dispatchWorkflow(
     c as Client,
@@ -1953,7 +1994,7 @@ func checkVariable(name as string) {
  * @param repo {string} `owner/name`
  * @param name {string} the secret's name, e.g. `DEPLOY_KEY`
  * @param value {string} the value
- * @throws {Error} kind `"forgejo"` on a bad name, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on a bad name, or as `call`
  */
 export func setSecret(c as Client, repo as string, name as string, value as string) {
     def path as string init repoPath($repo) + "/actions/secrets/" + checkVariable($name);
@@ -1966,7 +2007,7 @@ export func setSecret(c as Client, repo as string, name as string, value as stri
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @param name {string} the secret's name
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func deleteSecret(c as Client, repo as string, name as string) {
     call($c, "DELETE", repoPath($repo) + "/actions/secrets/" + checkVariable($name), "");
@@ -1978,7 +2019,7 @@ export func deleteSecret(c as Client, repo as string, name as string) {
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @return {map of string to string} each variable's value by its name
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func variables(c as Client, repo as string) {
     def out as map of string to string init {};
@@ -1995,14 +2036,15 @@ export func variables(c as Client, repo as string) {
  * @param repo {string} `owner/name`
  * @param name {string} the variable's name
  * @param value {string} the value
- * @throws {Error} kind `"forgejo"` on a bad name, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on a bad name, or as `call`
  */
 export func setVariable(c as Client, repo as string, name as string, value as string) {
     def path as string init repoPath($repo) + "/actions/variables/" + checkVariable($name);
     try {
         call($c, "PUT", $path, objectOf({"name": $name, "value": $value}, {}));
     } catch (e) {
-        if (not strings.startsWith($e.message, "forgejo: PUT " + $path + ": HTTP 404")) {
+        # a missing variable is a 404 for this PUT; anything else is a failure
+        if ($e.kind != ERROR_KIND or $e.status != 404) {
             throw $e;
         }
         call($c, "POST", $path, objectOf({"value": $value}, {}));
@@ -2015,7 +2057,7 @@ export func setVariable(c as Client, repo as string, name as string, value as st
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @param name {string} the variable's name
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func deleteVariable(c as Client, repo as string, name as string) {
     call($c, "DELETE", repoPath($repo) + "/actions/variables/" + checkVariable($name), "");
@@ -2030,7 +2072,7 @@ export func deleteVariable(c as Client, repo as string, name as string) {
  * @param title {string} the new title; "" to keep it
  * @param body {string} the new text; "" to keep it
  * @return {Issue} the issue
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func editIssue(c as Client, repo as string, number as int, title as string, body as string) {
     def doc as string init objectOf({"title": $title, "body": $body}, {});
@@ -2045,7 +2087,7 @@ export func editIssue(c as Client, repo as string, number as int, title as strin
  * @param number {int} its number
  * @param names {list of string} the user names; `[]` for nobody
  * @return {Issue} the issue
- * @throws {Error} kind `"forgejo"` on a bad name, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on a bad name, or as `call`
  */
 export func setAssignees(c as Client, repo as string, number as int, names as list of string) {
     for (def name in $names) {
@@ -2063,7 +2105,7 @@ export func setAssignees(c as Client, repo as string, number as int, names as li
  * @param number {int} its number
  * @param milestoneId {int} the milestone's id; 0 for none
  * @return {Issue} the issue
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func setMilestone(c as Client, repo as string, number as int, milestoneId as int) {
     def doc as json.Value init json.set(json.decode('{}'), "/milestone", $milestoneId);
@@ -2079,7 +2121,7 @@ export func setMilestone(c as Client, repo as string, number as int, milestoneId
  * @param title {string} the new title; "" to keep it
  * @param body {string} the new text; "" to keep it
  * @return {PullRequest} the pull request
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func editPullRequest(
     c as Client,
@@ -2101,7 +2143,7 @@ export func editPullRequest(
  * @param name {string} the new title; "" to keep it
  * @param body {string} the new notes; "" to keep them
  * @return {Release} the release
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func editRelease(c as Client, repo as string, id as int, name as string, body as string) {
     def doc as string init objectOf({"name": $name, "body": $body}, {});
@@ -2117,7 +2159,7 @@ export func editRelease(c as Client, repo as string, id as int, name as string, 
  * @param id {int} the comment id
  * @param body {string} the new text
  * @return {Comment} the comment
- * @throws {Error} kind `"forgejo"` on an empty text, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on an empty text, or as `call`
  */
 export func editComment(c as Client, repo as string, id as int, body as string) {
     if (strings.trim($body) == "") {
@@ -2133,7 +2175,7 @@ export func editComment(c as Client, repo as string, id as int, body as string) 
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @param id {int} the comment id
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func deleteComment(c as Client, repo as string, id as int) {
     call($c, "DELETE", repoPath($repo) + "/issues/comments/" + convert.toString($id), "");
@@ -2147,7 +2189,7 @@ export func deleteComment(c as Client, repo as string, id as int) {
  * @param description {string} the new description; "" to keep it
  * @param website {string} the new website; "" to keep it
  * @return {Repository} the repository
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func editRepository(c as Client, repo as string, description as string, website as string) {
     def doc as string init objectOf({"description": $description, "website": $website}, {});
@@ -2161,7 +2203,7 @@ export func editRepository(c as Client, repo as string, description as string, w
  * @param repo {string} `owner/name`
  * @param archived {bool} whether it is archived
  * @return {Repository} the repository
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func setArchived(c as Client, repo as string, archived as bool) {
     def doc as string init objectOf({}, {"archived": $archived});
@@ -2175,7 +2217,7 @@ export func setArchived(c as Client, repo as string, archived as bool) {
  * @param repo {string} `owner/name`
  * @param branch {string} an existing branch
  * @return {Repository} the repository
- * @throws {Error} kind `"forgejo"` on an empty name, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on an empty name, or as `call`
  */
 export func setDefaultBranch(c as Client, repo as string, branch as string) {
     segments($branch, "branch");
@@ -2214,7 +2256,7 @@ func labelFrom(d as json.Value, p as string) {
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @return {list of Label} the labels
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func labels(c as Client, repo as string) {
     def out as list of Label init [];
@@ -2233,7 +2275,7 @@ export func labels(c as Client, repo as string) {
  * @param color {string} the colour, e.g. `#ee0701`
  * @param description {string} the description; "" for none
  * @return {Label} the new label
- * @throws {Error} kind `"forgejo"` on an empty name or a colour that is not
+ * @throws {ForgejoError} kind `"forgejo"` on an empty name or a colour that is not
  *   `#rrggbb`, or as `call`
  */
 export func createLabel(
@@ -2260,7 +2302,7 @@ export func createLabel(
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @param id {int} the label id
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func deleteLabel(c as Client, repo as string, id as int) {
     call($c, "DELETE", repoPath($repo) + "/labels/" + convert.toString($id), "");
@@ -2303,7 +2345,7 @@ func sendLabels(
  * @param number {int} its number
  * @param names {list of string} label names; `[]` for none
  * @return {list of Label} its labels now
- * @throws {Error} kind `"forgejo"` when a label does not exist, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` when a label does not exist, or as `call`
  */
 export func setIssueLabels(c as Client, repo as string, number as int, names as list of string) {
     return sendLabels($c, "PUT", $repo, $number, $names);
@@ -2317,7 +2359,7 @@ export func setIssueLabels(c as Client, repo as string, number as int, names as 
  * @param number {int} its number
  * @param names {list of string} label names
  * @return {list of Label} its labels now
- * @throws {Error} kind `"forgejo"` when a label does not exist, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` when a label does not exist, or as `call`
  */
 export func addIssueLabels(c as Client, repo as string, number as int, names as list of string) {
     return sendLabels($c, "POST", $repo, $number, $names);
@@ -2330,7 +2372,7 @@ export func addIssueLabels(c as Client, repo as string, number as int, names as 
  * @param repo {string} `owner/name`
  * @param number {int} its number
  * @param name {string} the label name
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func removeIssueLabel(c as Client, repo as string, number as int, name as string) {
     if (strings.trim($name) == "") {
@@ -2365,7 +2407,7 @@ func milestoneFrom(d as json.Value, p as string) {
  * @param repo {string} `owner/name`
  * @param state {string} `open`, `closed` or `all`
  * @return {list of Milestone} the milestones
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func milestones(c as Client, repo as string, state as string) {
     def out as list of Milestone init [];
@@ -2385,7 +2427,7 @@ export func milestones(c as Client, repo as string, state as string) {
  * @param dueOn {string} the due date, RFC 3339 (`2026-12-31T00:00:00Z`); ""
  *   for none
  * @return {Milestone} the new milestone
- * @throws {Error} kind `"forgejo"` on an empty title, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on an empty title, or as `call`
  */
 export func createMilestone(
     c as Client,
@@ -2414,7 +2456,7 @@ export func createMilestone(
  * @param id {int} the milestone id
  * @param closed {bool} whether it is closed
  * @return {Milestone} the milestone
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func setMilestoneClosed(c as Client, repo as string, id as int, closed as bool) {
     def state as string init "open";
@@ -2431,7 +2473,7 @@ export func setMilestoneClosed(c as Client, repo as string, id as int, closed as
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @param id {int} the milestone id
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func deleteMilestone(c as Client, repo as string, id as int) {
     call($c, "DELETE", repoPath($repo) + "/milestones/" + convert.toString($id), "");
@@ -2460,7 +2502,7 @@ func branchFrom(d as json.Value) {
  * @param from {string} the branch, tag or commit it starts at; "" for the
  *   default branch
  * @return {Branch} the new branch
- * @throws {Error} kind `"forgejo"` on a bad name, or when it exists (HTTP 409)
+ * @throws {ForgejoError} kind `"forgejo"` on a bad name, or when it exists (HTTP 409)
  */
 export func createBranch(c as Client, repo as string, name as string, from as string) {
     segments($name, "branch");
@@ -2474,7 +2516,7 @@ export func createBranch(c as Client, repo as string, name as string, from as st
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @param name {string} the branch
- * @throws {Error} kind `"forgejo"` when it is protected or the default
+ * @throws {ForgejoError} kind `"forgejo"` when it is protected or the default
  *   branch, or as `call`
  */
 export func deleteBranch(c as Client, repo as string, name as string) {
@@ -2491,7 +2533,7 @@ export func deleteBranch(c as Client, repo as string, name as string) {
  *   branch
  * @param message {string} the annotation; "" for a lightweight tag
  * @return {Tag} the new tag
- * @throws {Error} kind `"forgejo"` on a bad name, or when it exists (HTTP 409)
+ * @throws {ForgejoError} kind `"forgejo"` on a bad name, or when it exists (HTTP 409)
  */
 export func createTag(
     c as Client,
@@ -2517,7 +2559,7 @@ export func createTag(
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @param name {string} the tag
- * @throws {Error} kind `"forgejo"` when it is protected, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` when it is protected, or as `call`
  */
 export func deleteTag(c as Client, repo as string, name as string) {
     segments($name, "tag");
@@ -2533,7 +2575,7 @@ export func deleteTag(c as Client, repo as string, name as string) {
  * @param message {string} the commit message
  * @param branch {string} the branch to commit to; "" for the default branch
  * @return {string} the new commit's SHA
- * @throws {Error} kind `"forgejo"` on an empty message, when the file does
+ * @throws {ForgejoError} kind `"forgejo"` on an empty message, when the file does
  *   not exist, or as `call`
  */
 export func deleteFile(
@@ -2566,7 +2608,7 @@ export func deleteFile(
  * @param path {string} the directory; "" for the root
  * @param ref {string} a branch, tag or commit; "" for the default branch
  * @return {list of Entry} the entries
- * @throws {Error} kind `"forgejo"` when it does not exist or is a file, or
+ * @throws {ForgejoError} kind `"forgejo"` when it does not exist or is a file, or
  *   as `call`
  */
 export func listDirectory(c as Client, repo as string, path as string, ref as string) {
@@ -2636,7 +2678,7 @@ def const REVIEW_EVENTS as list of string init ["APPROVED", "REQUEST_CHANGES", "
  * @param body {string} the text; "" for none, which `REQUEST_CHANGES` and
  *   `COMMENT` do not allow
  * @return {Review} the review
- * @throws {Error} kind `"forgejo"` on another event, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on another event, or as `call`
  */
 export func reviewPullRequest(
     c as Client,
@@ -2661,7 +2703,7 @@ export func reviewPullRequest(
  * @param repo {string} `owner/name`
  * @param number {int} its number
  * @return {list of Review} the reviews
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func reviews(c as Client, repo as string, number as int) {
     def out as list of Review init [];
@@ -2678,7 +2720,7 @@ export func reviews(c as Client, repo as string, number as int) {
  * @param repo {string} `owner/name`
  * @param number {int} its number
  * @param names {list of string} the user names
- * @throws {Error} kind `"forgejo"` on a bad name, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on a bad name, or as `call`
  */
 export func requestReviewers(c as Client, repo as string, number as int, names as list of string) {
     if (len($names) == 0) {
@@ -2698,7 +2740,7 @@ export func requestReviewers(c as Client, repo as string, number as int, names a
  * @param repo {string} `owner/name`
  * @param number {int} its number
  * @return {list of ChangedFile} the files
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func pullRequestFiles(c as Client, repo as string, number as int) {
     def out as list of ChangedFile init [];
@@ -2740,7 +2782,7 @@ func hookFrom(d as json.Value) {
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @return {list of Hook} the webhooks
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func hooks(c as Client, repo as string) {
     def out as list of Hook init [];
@@ -2760,7 +2802,7 @@ export func hooks(c as Client, repo as string) {
  *   (`X-Forgejo-Signature`); "" for none
  * @param events {list of string} the events, e.g. `["push", "pull_request"]`
  * @return {Hook} the new webhook
- * @throws {Error} kind `"forgejo"` on a URL that is not http(s), no events,
+ * @throws {ForgejoError} kind `"forgejo"` on a URL that is not http(s), no events,
  *   or as `call`
  */
 export func createHook(
@@ -2790,7 +2832,7 @@ export func createHook(
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @param id {int} the hook id
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func deleteHook(c as Client, repo as string, id as int) {
     call($c, "DELETE", repoPath($repo) + "/hooks/" + convert.toString($id), "");
@@ -2802,7 +2844,7 @@ export func deleteHook(c as Client, repo as string, id as int) {
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @return {list of User} the collaborators
- * @throws {Error} kind `"forgejo"` as `getAll`
+ * @throws {ForgejoError} kind `"forgejo"` as `getAll`
  */
 export func collaborators(c as Client, repo as string) {
     def out as list of User init [];
@@ -2819,7 +2861,7 @@ export func collaborators(c as Client, repo as string) {
  * @param repo {string} `owner/name`
  * @param name {string} the user
  * @param permission {string} `read`, `write` or `admin`
- * @throws {Error} kind `"forgejo"` on another permission, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on another permission, or as `call`
  */
 export func addCollaborator(c as Client, repo as string, name as string, permission as string) {
     if (not lists.contains(["read", "write", "admin"], $permission)) {
@@ -2835,7 +2877,7 @@ export func addCollaborator(c as Client, repo as string, name as string, permiss
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @param name {string} the user
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func removeCollaborator(c as Client, repo as string, name as string) {
     call($c, "DELETE", repoPath($repo) + "/collaborators/" + checkOwner($name), "");
@@ -2851,7 +2893,7 @@ export func removeCollaborator(c as Client, repo as string, name as string) {
  *   token's account
  * @param name {string} the fork's name; "" for the same name
  * @return {Repository} the fork
- * @throws {Error} kind `"forgejo"` on a bad name, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on a bad name, or as `call`
  */
 export func forkRepository(c as Client, repo as string, organization as string, name as string) {
     if ($organization != "") {
@@ -2870,8 +2912,8 @@ export func forkRepository(c as Client, repo as string, organization as string, 
  * @param c {Client} the client
  * @param query {string} the words to look for
  * @return {list of Repository} the matches, best first
- * @throws {Error} kind `"forgejo"` on an empty query, past `MAX_PAGES`
- *   pages, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` on an empty query, or as `call`
+ * @throws {Error} kind `"limit"` past `MAX_PAGES` pages
  */
 export func searchRepositories(c as Client, query as string) {
     if (strings.trim($query) == "") {
@@ -2882,7 +2924,11 @@ export func searchRepositories(c as Client, query as string) {
     def more as bool init true;
     while ($more) {
         if ($page > MAX_PAGES) {
-            fail("GET /repos/search: more than " + convert.toString(MAX_PAGES) + " pages");
+            throw Error{
+                kind: "limit",
+                message: "forgejo: GET /repos/search: more than " + convert.toString(MAX_PAGES) +
+                    " pages"
+            };
         }
         def path as string init "/repos/search?includeDesc=true&q=" + uri.encode($query) +
             "&limit=" +
@@ -2912,7 +2958,7 @@ export func searchRepositories(c as Client, query as string) {
  * @param c {Client} the client
  * @param repo {string} `owner/name`
  * @return {Release} the release
- * @throws {Error} kind `"forgejo"` when there is none (HTTP 404), or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` when there is none (HTTP 404), or as `call`
  */
 export func latestRelease(c as Client, repo as string) {
     return releaseFrom(call($c, "GET", repoPath($repo) + "/releases/latest", ""));
@@ -2925,7 +2971,7 @@ export func latestRelease(c as Client, repo as string) {
  * @param repo {string} `owner/name`
  * @param releaseId {int} the release id
  * @param assetId {int} the asset id
- * @throws {Error} kind `"forgejo"` as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`
  */
 export func deleteAsset(c as Client, repo as string, releaseId as int, assetId as int) {
     def path as string init repoPath($repo) + "/releases/" + convert.toString($releaseId) +

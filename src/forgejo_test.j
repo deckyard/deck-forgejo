@@ -171,10 +171,10 @@ func bodyOf(s as Seen) {
 /**
  * The message of the deck's error.
  *
- * @param e {Error} the error
+ * @param e {ForgejoError} the error
  * @return {string} its message
  */
-func messageOf(e as Error) {
+func messageOf(e as ForgejoError) {
     testing.assertEqual($e.kind, ERROR_KIND);
     return $e.message;
 }
@@ -343,6 +343,8 @@ func testRefusalsNameTheRequest() {
         testing.assertEqual(
             messageOf($e),
             "forgejo: GET /repos/me/missing: HTTP 404: repo does not exist");
+        # the status is a field: no need to read it out of the message
+        testing.assertEqual($e.status, 404);
     }
     finish($f);
     try {
@@ -975,5 +977,35 @@ func testRepositoryAdmin() {
         missed();
     } catch (e) {
         testing.assertContains(messageOf($e), "a permission is read, write or admin");
+    }
+}
+
+# A local check has status 0; a cap reached in transport stays kind "limit",
+# with the request in front of the cause.
+func testLocalFailuresAndCaps() {
+    try {
+        fail("a token holds no spaces");
+        missed();
+    } catch (e) {
+        testing.assertEqual($e.kind, ERROR_KIND);
+        testing.assertEqual($e.status, 0);
+    }
+    try {
+        failTransport(
+            "GET /repos/me/app",
+            Error{kind: "limit", message: "http: response body exceeds 10 bytes"});
+        missed();
+    } catch (e) {
+        testing.assertEqual($e.kind, "limit");
+        testing.assertEqual(
+            $e.message,
+            "forgejo: GET /repos/me/app: http: response body exceeds 10 bytes");
+    }
+    try {
+        failTransport("GET /version", Error{kind: "http", message: "connection refused"});
+        missed();
+    } catch (e) {
+        testing.assertEqual($e.kind, ERROR_KIND);
+        testing.assertEqual($e.status, 0);
     }
 }
