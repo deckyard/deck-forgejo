@@ -56,7 +56,8 @@ try {
 ```
 
 A list past `MAX_PAGES` pages, or a reply over its size cap, is kind `"limit"`
-instead (a plain `Error`).
+instead, a deadline is kind `"timeout"`, and a connection closed under a
+request is kind `"closed"` (each a plain `Error`).
 
 ## Requirements
 

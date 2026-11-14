@@ -233,6 +233,18 @@ func testClientSettings() {
             messageOf($e),
             "forgejo: a token holds no spaces or control characters");
     }
+    try {
+        withTimeout($c, -1);
+        missed();
+    } catch (e) {
+        testing.assertEqual(messageOf($e), "forgejo: a timeout is 0 or more milliseconds, got -1");
+    }
+    try {
+        withRetries($c, -1);
+        missed();
+    } catch (e) {
+        testing.assertEqual(messageOf($e), "forgejo: retries are 0 or more, got -1");
+    }
 }
 
 func testNamesAndPathsAreChecked() {
@@ -506,6 +518,101 @@ func testPullRequests() {
     } catch (e) {
         testing.assertContains(messageOf($e), "a merge style is one of merge, rebase");
     }
+}
+
+/**
+ * Answer one request: a redirect, or a body. Hands back the Authorization
+ * header the request carried.
+ *
+ * @param srv {httpd.Server} the server
+ * @param location {string} where to redirect; "" to answer `body` instead
+ * @param body {string} the body
+ * @return {string} the request's Authorization header
+ */
+func hop(srv as httpd.Server, location as string, body as string) {
+    def req as httpd.Request init httpd.accept($srv);
+    def auth as string init httpd.header($req, "Authorization");
+    if ($location != "") {
+        httpd.setHeader($req, "Location", $location);
+        httpd.respond($req, 302, "");
+    } else {
+        httpd.respond($req, 200, $body);
+    }
+    return $auth;
+}
+
+# An instance serving files from object storage redirects there: the download
+# follows it, and the token stays with the instance.
+func testDownloadFollowsARedirectWithoutTheToken() {
+    def store as httpd.Server init httpd.listen("127.0.0.1:0");
+    def inst as httpd.Server init httpd.listen("127.0.0.1:0");
+    def storeUrl as string init "http://" + httpd.address($store) +
+        "/bucket/app.tar.gz?X-Amz-Signature=s3cr3t";
+    def a as task of string init spawn {
+        return hop($inst, $storeUrl, "");
+    };
+    def b as task of string init spawn {
+        return hop($store, "", "FROM STORAGE");
+    };
+    def c as Client init withToken(client("http://" + httpd.address($inst)), "t0k3n");
+    def asset as Asset init Asset{
+        id: 1,
+        name: "app.tar.gz",
+        size: 12,
+        downloads: 0,
+        downloadUrl: $c.url + "/attachments/x"
+    };
+    testing.assertEqual(
+        convert.stringFromBytes("utf-8", downloadAsset($c, $asset, 0)),
+        "FROM STORAGE");
+    testing.assertEqual(task.wait($a), "token t0k3n");
+    testing.assertEqual(task.wait($b), "");
+    httpd.shutdown($store);
+    httpd.shutdown($inst);
+}
+
+# Too many redirects fail, and the message never shows a signed URL's query.
+func testDownloadRedirectLimit() {
+    def inst as httpd.Server init httpd.listen("127.0.0.1:0");
+    def self as string init "http://" + httpd.address($inst) + "/loop?sig=s3cr3t";
+    def t as task of int init spawn {
+        for (def k in 0..MAX_REDIRECTS + 1) {
+            hop($inst, $self, "");
+        }
+        return 0;
+    };
+    def c as Client init withToken(client("http://" + httpd.address($inst)), "t0k3n");
+    def asset as Asset init Asset{
+        id: 1,
+        name: "x",
+        size: 1,
+        downloads: 0,
+        downloadUrl: $c.url + "/attachments/x"
+    };
+    try {
+        downloadAsset($c, $asset, 0);
+        missed();
+    } catch (e) {
+        testing.assertContains(messageOf($e), "more than 5 redirects");
+        testing.assertFalse(strings.contains(messageOf($e), "s3cr3t"));
+    }
+    task.wait($t);
+    httpd.shutdown($inst);
+}
+
+func testPullRequestHeadRepo() {
+    def own as string init strings.replace(
+        PULL,
+        '"head":{"ref":"fix-crash","sha":"abc123"}',
+        '"head":{"ref":"fix-crash","sha":"abc123","repo":{"full_name":"me/app"}}');
+    def fork as string init strings.replace($own, '"full_name":"me/app"', '"full_name":"bob/app"');
+    def f as Fake init fake([ok($own), ok($fork), ok(PULL)]);
+    def c as Client init tokenClient($f);
+    testing.assertEqual(pullRequest($c, "me/app", 15).headRepo, "me/app");
+    testing.assertEqual(pullRequest($c, "me/app", 15).headRepo, "bob/app");
+    # the fork is gone: Forgejo sends no head repo
+    testing.assertEqual(pullRequest($c, "me/app", 15).headRepo, "");
+    finish($f);
 }
 
 func testReleasesAndAssets() {
@@ -807,6 +914,8 @@ func testEditing() {
 func testLabelsAndMilestones() {
     def label as string init '{"id":4,"name":"bug","color":"ee0701","description":"",' +
         '"exclusive":false}';
+    def scoped as string init '{"id":9,"name":"scope/ui","color":"00aabb","description":"",' +
+        '"exclusive":true}';
     def milestone as string init '{"id":3,"title":"1.0","state":"open","due_on":null,' +
         '"open_issues":2,"closed_issues":5}';
     def f as Fake init fake([
@@ -815,7 +924,9 @@ func testLabelsAndMilestones() {
         ok(""),
         ok("[" + $label + "]"),
         ok("[" + $label + "]"),
+        pageOf("[" + $label + "," + $scoped + "]", 1),
         ok(""),
+        pageOf("[" + $label + "]", 1),
         pageOf("[" + $milestone + "]", 1),
         ok($milestone),
         ok($milestone),
@@ -830,6 +941,8 @@ func testLabelsAndMilestones() {
     testing.assertEqual(len(setIssueLabels($c, "me/app", 12, ["bug"])), 1);
     addIssueLabels($c, "me/app", 12, ["bug"]);
     removeIssueLabel($c, "me/app", 12, "scope/ui");
+    # a label the issue does not have: looked up, nothing deleted
+    removeIssueLabel($c, "me/app", 12, "scope/ui");
     def ms as list of Milestone init milestones($c, "me/app", "open");
     createMilestone($c, "me/app", "1.0", "", "2026-12-31T00:00:00Z");
     setMilestoneClosed($c, "me/app", 3, true);
@@ -841,12 +954,17 @@ func testLabelsAndMilestones() {
     testing.assertEqual($seen[3].method, "PUT");
     testing.assertEqual(json.encode(bodyOf($seen[3])), '{"labels":["bug"]}');
     testing.assertEqual($seen[4].method, "POST");
-    testing.assertEqual($seen[5].path, "/api/v1/repos/me/app/issues/12/labels/scope/ui");
-    testing.assertEqual($seen[6].query["state"], "open");
+    # by id, the only form Gitea takes
+    testing.assertEqual($seen[5].method, "GET");
+    testing.assertEqual($seen[5].path, "/api/v1/repos/me/app/issues/12/labels");
+    testing.assertEqual($seen[6].method, "DELETE");
+    testing.assertEqual($seen[6].path, "/api/v1/repos/me/app/issues/12/labels/9");
+    testing.assertEqual($seen[7].method, "GET");
+    testing.assertEqual($seen[8].query["state"], "open");
     testing.assertEqual(
-        json.encode(bodyOf($seen[7])),
+        json.encode(bodyOf($seen[9])),
         '{"due_on":"2026-12-31T00:00:00Z","title":"1.0"}');
-    testing.assertEqual(json.encode(bodyOf($seen[8])), '{"state":"closed"}');
+    testing.assertEqual(json.encode(bodyOf($seen[10])), '{"state":"closed"}');
     try {
         createLabel($c, "me/app", "bug", "red", "");
         missed();
@@ -990,16 +1108,21 @@ func testLocalFailuresAndCaps() {
         testing.assertEqual($e.kind, ERROR_KIND);
         testing.assertEqual($e.status, 0);
     }
+    for (def kind in ["limit", "timeout", "closed"]) {
+        try {
+            failTransport("GET /repos/me/app", Error{kind: $kind, message: "http: cause"});
+            missed();
+        } catch (e) {
+            testing.assertEqual($e.kind, $kind);
+            testing.assertEqual($e.message, "forgejo: GET /repos/me/app: http: cause");
+        }
+    }
     try {
-        failTransport(
-            "GET /repos/me/app",
-            Error{kind: "limit", message: "http: response body exceeds 10 bytes"});
+        failTransport("GET /user", Error{kind: "cancelled", message: "task cancelled"});
         missed();
     } catch (e) {
-        testing.assertEqual($e.kind, "limit");
-        testing.assertEqual(
-            $e.message,
-            "forgejo: GET /repos/me/app: http: response body exceeds 10 bytes");
+        testing.assertEqual($e.kind, "cancelled");
+        testing.assertEqual($e.message, "task cancelled");
     }
     try {
         failTransport("GET /version", Error{kind: "http", message: "connection refused"});

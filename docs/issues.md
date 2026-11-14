@@ -30,7 +30,10 @@ forgejo.editIssue($c, "me/app", 12, "Crash on start with an empty config", "");
 ```
 
 Label verbs take names. `setIssueLabels` replaces them all, `[]` clears
-them. A `scope/name` label is scoped; an exclusive scope allows one label of
+them. Forgejo drops a name it does not know without an error, so check the
+labels `setIssueLabels` and `addIssueLabels` return; organisation labels
+count as known. `removeIssueLabel` leaves an issue without the label as it
+is, and works on Gitea too (it removes by id). A `scope/name` label is scoped; an exclusive scope allows one label of
 it per issue. `""` in `editIssue` keeps the title or text.
 
 ## Pull requests

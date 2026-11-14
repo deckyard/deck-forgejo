@@ -30,9 +30,11 @@ for (def a in $latest.assets) {
 ```
 
 `downloadAsset` holds the file in memory and refuses one over its limit,
-64 MiB with 0. It only sends the token to the instance itself, and follows no
-redirect: an instance that serves assets straight from object storage
-answers with one, and `downloadAsset` reports it as a failure.
+64 MiB with 0. It only sends the token to the instance itself. It follows
+up to five redirects, as an instance that serves assets straight from
+object storage (`SERVE_DIRECT`) answers with one: a redirect to another
+host is followed without the token, and one from https to plain http is
+refused.
 
 ## Branches and tags
 

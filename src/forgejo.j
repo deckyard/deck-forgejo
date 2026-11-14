@@ -14,7 +14,8 @@
  * A `Client` authenticates with an access token (`withToken`). Every
  * failure is a `ForgejoError` (kind `"forgejo"`) carrying the HTTP `status`
  * the instance answered, except that a listing past `MAX_PAGES` pages or a
- * reply over its size cap is kind `"limit"`.
+ * reply over its size cap is kind `"limit"`, a deadline is kind
+ * `"timeout"`, and a connection closed under a request is kind `"closed"`.
  *
  * @module forgejo
  * @see https://forgejo.org/docs/latest/user/api-usage/
@@ -185,6 +186,9 @@ export def struct Comment {
  * @field head {string} the branch with the changes
  * @field base {string} the branch it merges into
  * @field headSha {string} the commit at the head
+ * @field headRepo {string} the repository the head branch is in,
+ *   `owner/name`; another one than the pull request's for a fork, `""` once
+ *   that repository is gone
  * @field isDraft {bool} whether it is a draft
  * @field mergeable {bool} whether Forgejo can merge it
  * @field merged {bool} whether it is merged
@@ -200,6 +204,7 @@ export def struct PullRequest {
     head as string,
     base as string,
     headSha as string,
+    headRepo as string,
     isDraft as bool,
     mergeable as bool,
     merged as bool,
@@ -473,11 +478,16 @@ func failStatus(message as string, status as int) {
 }
 
 # failTransport throws the error of a request that got no usable answer: a
-# reached cap (an `http` body cap) stays kind "limit", anything else is a
-# ForgejoError; the message is `forgejo: <verb> <path>: <cause>` either way.
+# reached cap (an `http` body cap) stays kind "limit", a deadline "timeout"
+# and a connection closed under the call "closed", with the request in front
+# of the cause; a cancelled task is passed on as it is; anything else is a
+# ForgejoError with status 0. The message is `forgejo: <verb> <path>: <cause>`.
 func failTransport(what as string, e as Error) {
-    if ($e.kind == "limit") {
-        throw Error{kind: "limit", message: "forgejo: " + $what + ": " + $e.message};
+    if ($e.kind == "cancelled") {
+        throw $e;
+    }
+    if ($e.kind == "limit" or $e.kind == "timeout" or $e.kind == "closed") {
+        throw Error{kind: $e.kind, message: "forgejo: " + $what + ": " + $e.message};
     }
     fail($what + ": " + $e.message);
 }
@@ -601,8 +611,12 @@ export func withInsecure(c as Client) {
  * @param c {Client} the client
  * @param ms {int} milliseconds; 0 for the default, 30 s
  * @return {Client} the changed copy
+ * @throws {ForgejoError} kind `"forgejo"` when it is negative
  */
 export func withTimeout(c as Client, ms as int) {
+    if ($ms < 0) {
+        fail("a timeout is 0 or more milliseconds, got " + convert.toString($ms));
+    }
     $c.timeoutMs = $ms;
     return $c;
 }
@@ -614,8 +628,12 @@ export func withTimeout(c as Client, ms as int) {
  * @param c {Client} the client
  * @param n {int} retries, 0 for none
  * @return {Client} the changed copy
+ * @throws {ForgejoError} kind `"forgejo"` when it is negative
  */
 export func withRetries(c as Client, n as int) {
+    if ($n < 0) {
+        fail("retries are 0 or more, got " + convert.toString($n));
+    }
     $c.retries = $n;
     return $c;
 }
@@ -1304,6 +1322,7 @@ func pullFrom(d as json.Value) {
         head: headOf($d),
         base: field($d, "/base/ref"),
         headSha: field($d, "/head/sha"),
+        headRepo: field($d, "/head/repo/full_name"),
         isDraft: flag($d, "/draft"),
         mergeable: flag($d, "/mergeable"),
         merged: flag($d, "/merged"),
@@ -1591,7 +1610,25 @@ export func uploadAsset(
 }
 
 /**
- * GET bytes from a URL on the instance, with the token.
+ * A URL as an error message shows it: without its query, which on a signed
+ * storage URL carries the signature.
+ *
+ * @param url {string} the URL
+ * @return {string} the URL without its query, quoted
+ */
+func shownUrl(url as string) {
+    return shown(strings.split($url, "?")[0]);
+}
+
+/** The most redirects a download follows. */
+def const MAX_REDIRECTS as int init 5;
+
+/**
+ * GET bytes from a URL on the instance, with the token, following up to
+ * `MAX_REDIRECTS` redirects: an instance that serves files straight from
+ * object storage (`SERVE_DIRECT`) answers with one. The token goes only to
+ * the instance itself; a redirect elsewhere is followed without it, and one
+ * from https to plain http is refused.
  *
  * @param c {Client} the client
  * @param url {string} the absolute URL
@@ -1600,17 +1637,41 @@ export func uploadAsset(
  * @return {bytes} the body
  */
 func fetchBytes(c as Client, url as string, maxBytes as int) {
-    def headers as map of string to string init authHeaders($c);
-    $headers["Accept"] = "*/*";
+    def cur as string init $url;
+    def hops as int init 0;
     def r as http.BytesResponse;
-    try {
-        $r = http.requestWithBytes("GET", $url, $headers, "", idleMs($c), $maxBytes, $c.tls);
-    } catch (e) {
-        failTransport("GET " + $url, $e);
+    while (true) {
+        def headers as map of string to string init {};
+        if (strings.startsWith($cur, $c.url + "/")) {
+            $headers = authHeaders($c);
+        }
+        $headers["Accept"] = "*/*";
+        try {
+            $r = http.requestWithBytes("GET", $cur, $headers, "", idleMs($c), $maxBytes, $c.tls);
+        } catch (e) {
+            failTransport("GET " + shownUrl($cur), $e);
+        }
+        if ($r.status < 300 or $r.status >= 400 or not maps.has($r.headers, "location")) {
+            break;
+        }
+        if ($hops >= MAX_REDIRECTS) {
+            failStatus(
+                "GET " + shownUrl($url) + ": more than " + convert.toString(MAX_REDIRECTS) +
+                    " redirects",
+                $r.status);
+        }
+        def next as string init uri.resolve($cur, strings.trim($r.headers["location"]));
+        if (strings.startsWith($cur, "https://") and not strings.startsWith($next, "https://")) {
+            failStatus(
+                "GET " + shownUrl($cur) + ": refused a redirect from https to " + shownUrl($next),
+                $r.status);
+        }
+        $cur = $next;
+        $hops = $hops + 1;
     }
     if ($r.status < 200 or $r.status >= 300) {
         failStatus(
-            "GET " + $url + ": " +
+            "GET " + shownUrl($cur) + ": " +
                 failureText($r.status, $r.statusText, convert.stringFromBytes("utf-8", $r.body)),
             $r.status);
     }
@@ -2345,7 +2406,8 @@ func sendLabels(
  * @param number {int} its number
  * @param names {list of string} label names; `[]` for none
  * @return {list of Label} its labels now
- * @throws {ForgejoError} kind `"forgejo"` when a label does not exist, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`; Forgejo drops a name it does
+ *   not know without an error, so check the labels returned
  */
 export func setIssueLabels(c as Client, repo as string, number as int, names as list of string) {
     return sendLabels($c, "PUT", $repo, $number, $names);
@@ -2359,14 +2421,18 @@ export func setIssueLabels(c as Client, repo as string, number as int, names as 
  * @param number {int} its number
  * @param names {list of string} label names
  * @return {list of Label} its labels now
- * @throws {ForgejoError} kind `"forgejo"` when a label does not exist, or as `call`
+ * @throws {ForgejoError} kind `"forgejo"` as `call`; Forgejo drops a name it does
+ *   not know without an error, so check the labels returned
  */
 export func addIssueLabels(c as Client, repo as string, number as int, names as list of string) {
     return sendLabels($c, "POST", $repo, $number, $names);
 }
 
 /**
- * Take a label off an issue or pull request.
+ * Take a label off an issue or pull request. The label is looked up among
+ * the issue's own and removed by id, which Forgejo and Gitea both take
+ * (Gitea takes no name there); a label the issue does not have is left as
+ * it is, without an error.
  *
  * @param c {Client} the client
  * @param repo {string} `owner/name`
@@ -2378,7 +2444,13 @@ export func removeIssueLabel(c as Client, repo as string, number as int, name as
     if (strings.trim($name) == "") {
         fail("a label needs a name");
     }
-    call($c, "DELETE", issuePath($repo, $number) + "/labels/" + uri.encode($name), "");
+    def path as string init issuePath($repo, $number) + "/labels";
+    for (def d in getAll($c, $path)) {
+        if (field($d, "/name") == $name) {
+            call($c, "DELETE", $path + "/" + convert.toString(numberAt($d, "/id")), "");
+            return;
+        }
+    }
 }
 
 /**

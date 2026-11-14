@@ -12,8 +12,9 @@ import "@deckyard/forgejo/" as forgejo;
 
 Every function that sends a request throws a `ForgejoError` (kind `"forgejo"`,
 with the HTTP `status`) when it fails; a list past `MAX_PAGES` pages or a reply
-over its size cap is kind `"limit"`. A `repo` is `owner/name`; a `number` is an issue or pull request
-number.
+over its size cap is kind `"limit"`, a deadline kind `"timeout"`, a connection
+closed under a request kind `"closed"`. A `repo` is `owner/name`; a `number` is
+an issue or pull request number.
 
 ## Constants
 
@@ -116,6 +117,7 @@ Every error of kind `"forgejo"`.
 | `head as string` | the branch with the changes |
 | `base as string` | the branch it merges into |
 | `headSha as string` | the commit at the head |
+| `headRepo as string` | the repository of the head branch, `owner/name`; another for a fork, `""` once it is gone |
 | `isDraft as bool` | whether it is a draft |
 | `mergeable as bool` | whether Forgejo can merge it |
 | `merged as bool` | whether it is merged |
