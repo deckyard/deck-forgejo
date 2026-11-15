@@ -13,9 +13,12 @@
  *
  * A `Client` authenticates with an access token (`withToken`). Every
  * failure is a `ForgejoError` (kind `"forgejo"`) carrying the HTTP `status`
- * the instance answered, except that a listing past `MAX_PAGES` pages or a
- * reply over its size cap is kind `"limit"`, a deadline is kind
- * `"timeout"`, and a connection closed under a request is kind `"closed"`.
+ * the instance answered, except that a listing past `MAX_PAGES` pages, a
+ * reply over its size cap or nested past the JSON decoder's caps, or a
+ * download past five redirects is kind `"limit"`, a deadline is kind
+ * `"timeout"`, a connection closed under a request is kind `"closed"`, and
+ * a network failure (refused, reset, unreachable, DNS, TLS) is the
+ * `net.NetError` of kind `"net"` that `http` threw, passed on unchanged.
  *
  * @module forgejo
  * @see https://forgejo.org/docs/latest/user/api-usage/
@@ -488,6 +491,8 @@ func failStatus(message as string, status as int) {
 # and a connection closed under the call "closed", with the request in front
 # of the cause; a cancelled task is passed on as it is; anything else is a
 # ForgejoError with status 0. The message is `forgejo: <verb> <path>: <cause>`.
+# A network failure (kind "net", a net.NetError) never gets here: the
+# callers pass it on first, since a parameter typed Error refuses that struct.
 func failTransport(what as string, e as Error) {
     if ($e.kind == "cancelled") {
         throw $e;
@@ -828,6 +833,10 @@ func exchange(c as Client, method as string, path as string, body as string) {
     try {
         $r = http.send($verb, $c.url + "/api/v1" + $path, $headers, $body, $o);
     } catch (e) {
+        # a network failure is a net.NetError: passed on with its fields
+        if ($e.kind == "net") {
+            throw $e;
+        }
         failTransport($verb + " " + $path, $e);
     }
     if ($r.status < 200 or $r.status >= 300) {
@@ -892,6 +901,10 @@ func decoded(body as string, what as string) {
     try {
         return json.decode($body);
     } catch (e) {
+        # the decoder's nesting and node caps are a reached cap, kind "limit"
+        if ($e.kind == "limit") {
+            failTransport($what, $e);
+        }
         fail($what + ": the reply is not JSON");
     }
     return json.decode("null");
@@ -906,8 +919,9 @@ func decoded(body as string, what as string) {
  *   `/repos/forgejo/forgejo/labels?limit=10`
  * @param body {string} the JSON body; "" for none
  * @return {json.Value} the reply; JSON `null` when it is empty
- * @throws {ForgejoError} kind `"forgejo"` on a bad path, a network failure or a
- *   reply that is not 2xx; the message names the status and Forgejo's reason
+ * @throws {ForgejoError} kind `"forgejo"` on a bad path or a reply that is not
+ *   2xx; the message names the status and Forgejo's reason. A network failure
+ *   is kind `"net"` (a `net.NetError`)
  * @example
  *   def labels as json.Value init forgejo.call($c, "GET", "/repos/me/app/labels", "");
  */
@@ -1611,8 +1625,8 @@ export func deleteRelease(c as Client, repo as string, id as int) {
  * @param name {string} the file name
  * @param data {bytes} the content
  * @return {Asset} the new asset
- * @throws {ForgejoError} kind `"forgejo"` on a bad name, a network failure or a
- *   refusal
+ * @throws {ForgejoError} kind `"forgejo"` on a bad name or a refusal; a network
+ *   failure is kind `"net"` (a `net.NetError`)
  */
 export func uploadAsset(
     c as Client,
@@ -1642,6 +1656,10 @@ export func uploadAsset(
             0,
             $c.tls);
     } catch (e) {
+        # a network failure is a net.NetError: passed on with its fields
+        if ($e.kind == "net") {
+            throw $e;
+        }
         failTransport("POST " + $path, $e);
     }
     if ($r.status < 200 or $r.status >= 300) {
@@ -1693,16 +1711,22 @@ func fetchBytes(c as Client, url as string, maxBytes as int) {
         try {
             $r = http.requestWithBytes("GET", $cur, $headers, "", idleMs($c), $maxBytes, $c.tls);
         } catch (e) {
+            # a network failure is a net.NetError: passed on with its fields
+            if ($e.kind == "net") {
+                throw $e;
+            }
             failTransport("GET " + shownUrl($cur), $e);
         }
         if ($r.status < 300 or $r.status >= 400 or not maps.has($r.headers, "location")) {
             break;
         }
         if ($hops >= MAX_REDIRECTS) {
-            failStatus(
-                "GET " + shownUrl($url) + ": more than " + convert.toString(MAX_REDIRECTS) +
-                    " redirects",
-                $r.status);
+            # a reached cap: kind "limit"
+            throw Error{
+                kind: "limit",
+                message: "forgejo: GET " + shownUrl($url) + ": more than " +
+                    convert.toString(MAX_REDIRECTS) + " redirects"
+            };
         }
         def next as string init uri.resolve($cur, strings.trim($r.headers["location"]));
         if (strings.startsWith($cur, "https://") and not strings.startsWith($next, "https://")) {
@@ -1731,8 +1755,9 @@ func fetchBytes(c as Client, url as string, maxBytes as int) {
  * @param maxBytes {int} the largest file accepted; 0 for 64 MiB, negative
  *   for no limit
  * @return {bytes} the content
- * @throws {ForgejoError} kind `"forgejo"` on a foreign URL, a network failure or a
- *   file over `maxBytes`
+ * @throws {ForgejoError} kind `"forgejo"` on a foreign URL or a refusal; kind
+ *   `"limit"` for a file over `maxBytes` or more than five redirects; a
+ *   network failure is kind `"net"` (a `net.NetError`)
  */
 export func downloadAsset(c as Client, asset as Asset, maxBytes as int) {
     if (not strings.startsWith($asset.downloadUrl, $c.url + "/")) {
@@ -1791,8 +1816,8 @@ export func tags(c as Client, repo as string) {
  * @param path {string} the file, e.g. `docs/index.md`
  * @param ref {string} a branch, tag or commit; "" for the default branch
  * @return {bytes} the content
- * @throws {ForgejoError} kind `"forgejo"` when it does not exist, on a network
- *   failure, or for a file over 64 MiB
+ * @throws {ForgejoError} kind `"forgejo"` when it does not exist, or for a file
+ *   over 64 MiB; a network failure is kind `"net"` (a `net.NetError`)
  */
 export func readFile(c as Client, repo as string, path as string, ref as string) {
     def url as string init $c.url + "/api/v1" + repoPath($repo) + "/media/" +

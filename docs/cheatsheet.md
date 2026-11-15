@@ -11,9 +11,11 @@ import "@deckyard/forgejo/" as forgejo;
 ```
 
 Every function that sends a request throws a `ForgejoError` (kind `"forgejo"`,
-with the HTTP `status`) when it fails; a list past `MAX_PAGES` pages or a reply
-over its size cap is kind `"limit"`, a deadline kind `"timeout"`, a connection
-closed under a request kind `"closed"`. A `repo` is `owner/name`; a `number` is
+with the HTTP `status`) when it fails; a list past `MAX_PAGES` pages, a reply
+over its size cap or nested past the JSON decoder's caps, or a download past
+five redirects is kind `"limit"`, a deadline kind `"timeout"`, a connection
+closed under a request kind `"closed"`, and a network failure (refused, reset,
+unreachable, DNS, TLS) kind `"net"`, the `net.NetError` `http` threw. A `repo` is `owner/name`; a `number` is
 an issue or pull request number.
 
 ## Constants

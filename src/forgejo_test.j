@@ -10,6 +10,7 @@
  * and hands back what it received.
  */
 use httpd;
+use net;
 use task;
 use testing;
 
@@ -593,8 +594,11 @@ func testDownloadRedirectLimit() {
         downloadAsset($c, $asset, 0);
         missed();
     } catch (e) {
-        testing.assertContains(messageOf($e), "more than 5 redirects");
-        testing.assertFalse(strings.contains(messageOf($e), "s3cr3t"));
+        # a reached cap is the generic kind "limit"
+        testing.assertEqual($e.kind, "limit");
+        testing.assertContains($e.message, "forgejo: GET ");
+        testing.assertContains($e.message, "more than 5 redirects");
+        testing.assertFalse(strings.contains($e.message, "s3cr3t"));
     }
     task.wait($t);
     httpd.shutdown($inst);
@@ -1156,11 +1160,52 @@ func testLocalFailuresAndCaps() {
         testing.assertEqual($e.message, "task cancelled");
     }
     try {
-        failTransport("GET /version", Error{kind: "http", message: "connection refused"});
+        failTransport("GET /version", Error{kind: "http", message: "malformed status line"});
         missed();
     } catch (e) {
         testing.assertEqual($e.kind, ERROR_KIND);
         testing.assertEqual($e.status, 0);
+    }
+}
+
+# A reply nested past the JSON decoder's caps is a reached cap, "limit".
+func testDecoderCapsAreLimits() {
+    def deep as string init strings.repeat("[", 5000) + strings.repeat("]", 5000);
+    def f as Fake init fake([Reply{status: 200, total: "", body: $deep}]);
+    try {
+        version(tokenClient($f));
+        missed();
+    } catch (e) {
+        testing.assertEqual($e.kind, "limit");
+        testing.assertContains($e.message, "forgejo: GET /version: ");
+    }
+    finish($f);
+}
+
+# A network failure is net's NetError, passed on unchanged with its fields:
+# by the JSON calls, the byte reads and the upload alike.
+func testNetErrorsPassOn() {
+    def server as net.Listener init net.listen("127.0.0.1:0");
+    def address as string init net.address($server);
+    net.close($server);
+    def c as Client init withToken(client("http://" + $address), "t0k3n");
+    for (def step in ["call", "readFile", "uploadAsset"]) {
+        try {
+            if ($step == "call") {
+                version($c);
+            } elseif ($step == "readFile") {
+                readFile($c, "me/app", "README.md", "");
+            } else {
+                uploadAsset($c, "me/app", 1, "app.tar.gz", convert.bytesFromString("utf-8", "x"));
+            }
+            missed();
+        } catch (e) {
+            testing.assertEqual($e.kind, "net");
+            def ne as net.NetError init $e;
+            testing.assertEqual($ne.reason, "refused");
+            testing.assertEqual($ne.op, "connect");
+            testing.assertFalse($ne.sent);
+        }
     }
 }
 

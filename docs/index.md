@@ -55,9 +55,13 @@ try {
 }
 ```
 
-A list past `MAX_PAGES` pages, or a reply over its size cap, is kind `"limit"`
+A list past `MAX_PAGES` pages, a reply over its size cap or nested past the
+JSON decoder's caps, or a download past five redirects, is kind `"limit"`
 instead, a deadline is kind `"timeout"`, and a connection closed under a
-request is kind `"closed"` (each a plain `Error`).
+request is kind `"closed"` (each a plain `Error`). A network failure (refused,
+reset, unreachable, a name that does not resolve, a failed TLS handshake) is
+kind `"net"`: the `net.NetError` that `http` threw, passed on unchanged, so
+`reason`, `op`, `sent` and `replied` can be read once the kind matches.
 
 ## Requirements
 
