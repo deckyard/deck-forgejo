@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 
 /**
  * White-box tests for forgejo: jennifer test src/forgejo_test.j
@@ -166,7 +166,7 @@ func tokenClient(f as Fake) {
  * @return {json.Value} the body
  */
 func bodyOf(s as Seen) {
-    return json.decode(convert.stringFromBytes("utf-8", $s.body));
+    return json.decode(encoding.decode("utf-8", $s.body));
 }
 
 /**
@@ -223,7 +223,7 @@ func testClientSettings() {
     testing.assertTrue($c.tls.skipVerify);
     testing.assertEqual($c.timeoutMs, 5000);
     testing.assertEqual($c.retries, 2);
-    $c = withCaCert($c, convert.bytesFromString("utf-8", "PEM"));
+    $c = withCaCert($c, encoding.encode("utf-8", "PEM"));
     testing.assertFalse($c.tls.skipVerify);
     testing.assertEqual(withToken($c, "abc").token, "abc");
     try {
@@ -278,7 +278,7 @@ func testNamesAndPathsAreChecked() {
         }
     }
     ensurePath("/repos/me/app/issues?state=open&type=issues");
-    def long as string init strings.repeat("x", 100) + convert.fromCodepoint(10);
+    def long as string init strings.replicate("x", 100) + convert.fromCodepoint(10);
     try {
         repoPath($long);
         missed();
@@ -303,7 +303,7 @@ func testFailureText() {
     def said as string init failureText(
         500,
         "",
-        '{"message":"line one\nforged: line two ' + strings.repeat("x", 500) + '"}');
+        '{"message":"line one\nforged: line two ' + strings.replicate("x", 500) + '"}');
     testing.assertFalse(strings.contains($said, convert.fromCodepoint(10)));
     testing.assertContains($said, "line one?forged");
     testing.assertTrue(len($said) < 250);
@@ -563,9 +563,7 @@ func testDownloadFollowsARedirectWithoutTheToken() {
         downloads: 0,
         downloadUrl: $c.url + "/attachments/x"
     };
-    testing.assertEqual(
-        convert.stringFromBytes("utf-8", downloadAsset($c, $asset, 0)),
-        "FROM STORAGE");
+    testing.assertEqual(encoding.decode("utf-8", downloadAsset($c, $asset, 0)), "FROM STORAGE");
     testing.assertEqual(task.wait($a), "token t0k3n");
     testing.assertEqual(task.wait($b), "");
     httpd.shutdown($store);
@@ -645,12 +643,7 @@ func testReleasesAndAssets() {
     testing.assertEqual($got[0].assets[0].downloads, 7);
     testing.assertEqual(release($c, "me/app", "1.2.0").id, 5);
     createRelease($c, "me/app", "1.2.0", "", "", "Notes", true);
-    def a as Asset init uploadAsset(
-        $c,
-        "me/app",
-        5,
-        "app.zip",
-        convert.bytesFromString("utf-8", "zip"));
+    def a as Asset init uploadAsset($c, "me/app", 5, "app.zip", encoding.encode("utf-8", "zip"));
     testing.assertEqual($a.id, 10);
     deleteRelease($c, "me/app", 5);
     # The asset URL points at the fake server's old port, not this client's.
@@ -662,7 +655,7 @@ func testReleasesAndAssets() {
     }
     def local as Asset init $got[0].assets[0];
     $local.downloadUrl = $c.url + "/me/app/releases/download/1.2.0/app.tar.gz";
-    testing.assertEqual(convert.stringFromBytes("utf-8", downloadAsset($c, $local, 0)), "BINARY");
+    testing.assertEqual(encoding.decode("utf-8", downloadAsset($c, $local, 0)), "BINARY");
     def seen as list of Seen init finish($g);
     testing.assertEqual($seen[1].path, "/api/v1/repos/me/app/releases/tags/1.2.0");
     testing.assertEqual(
@@ -704,9 +697,9 @@ func testFiles() {
     ]);
     def c as Client init tokenClient($f);
     testing.assertEqual(
-        convert.stringFromBytes("utf-8", readFile($c, "me/app", "docs/a b.md", "dev")),
+        encoding.decode("utf-8", readFile($c, "me/app", "docs/a b.md", "dev")),
         "hello");
-    def data as bytes init convert.bytesFromString("utf-8", "hello");
+    def data as bytes init encoding.encode("utf-8", "hello");
     testing.assertEqual(writeFile($c, "me/app", "data/v.txt", $data, "add v", ""), "c1");
     testing.assertEqual(writeFile($c, "me/app", "data/v.txt", $data, "bump v", "dev"), "c2");
     # Only a 404 for the file itself means create; this one is no 404.
@@ -1170,7 +1163,7 @@ func testLocalFailuresAndCaps() {
 
 # A reply nested past the JSON decoder's caps is a reached cap, "limit".
 func testDecoderCapsAreLimits() {
-    def deep as string init strings.repeat("[", 5000) + strings.repeat("]", 5000);
+    def deep as string init strings.replicate("[", 5000) + strings.replicate("]", 5000);
     def f as Fake init fake([Reply{status: 200, total: "", body: $deep}]);
     try {
         version(tokenClient($f));
@@ -1196,7 +1189,7 @@ func testNetErrorsPassOn() {
             } elseif ($step == "readFile") {
                 readFile($c, "me/app", "README.md", "");
             } else {
-                uploadAsset($c, "me/app", 1, "app.tar.gz", convert.bytesFromString("utf-8", "x"));
+                uploadAsset($c, "me/app", 1, "app.tar.gz", encoding.encode("utf-8", "x"));
             }
             missed();
         } catch (e) {
@@ -1232,7 +1225,7 @@ func testPlainHttpOnlyToThisMachine() {
         testing.assertEqual(messageOf($e), $refusal);
     }
     try {
-        uploadAsset($lan, "me/app", 5, "a.zip", convert.bytesFromString("utf-8", "x"));
+        uploadAsset($lan, "me/app", 5, "a.zip", encoding.encode("utf-8", "x"));
         missed();
     } catch (e) {
         testing.assertEqual(messageOf($e), $refusal);

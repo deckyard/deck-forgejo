@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.26.0
+# pragma-jennifer-version: >=0.27.0
 # pragma-jennifer-capability: net
 
 /**
@@ -516,7 +516,7 @@ func plain(text as string, most as int) {
     def cut as string init $text;
     def more as string init "";
     if (len($text) > $most) {
-        $cut = strings.substring($text, 0, $most);
+        $cut = $text[..$most];
         $more = "...";
     }
     return regex.replace("[^ -~]", $cut, "?") + $more;
@@ -545,10 +545,10 @@ func baseUrl(address as string) {
         fail("the host is empty");
     }
     while (strings.endsWith($url, "/")) {
-        $url = strings.substring($url, 0, len($url) - 1);
+        $url = $url[..len($url) - 1];
     }
     if (strings.endsWith($url, "/api/v1")) {
-        $url = strings.substring($url, 0, len($url) - len("/api/v1"));
+        $url = $url[..len($url) - len("/api/v1")];
     }
     if (strings.contains($url, "://")) {
         return $url;
@@ -695,7 +695,7 @@ func ensurePath(path as string) {
     }
     def route as string init $path;
     if (strings.contains($route, "?")) {
-        $route = strings.substring($route, 0, strings.indexOf($route, "?"));
+        $route = $route[..strings.indexOf($route, "?")];
     }
     if (strings.contains($route, "//") or strings.contains($route, "#") or
         regex.matches("[\\x00-\\x20\\x7f]", $path)) {
@@ -1740,7 +1740,7 @@ func fetchBytes(c as Client, url as string, maxBytes as int) {
     if ($r.status < 200 or $r.status >= 300) {
         failStatus(
             "GET " + shownUrl($cur) + ": " +
-                failureText($r.status, $r.statusText, convert.stringFromBytes("utf-8", $r.body)),
+                failureText($r.status, $r.statusText, encoding.decode("utf-8", $r.body)),
             $r.status);
     }
     return $r.body;

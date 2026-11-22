@@ -65,5 +65,5 @@ kind `"net"`: the `net.NetError` that `http` threw, passed on unchanged, so
 
 ## Requirements
 
-Jennifer 0.26.0 or newer, the default `jennifer` binary, and the `net`
+Jennifer 0.27.0 or newer, the default `jennifer` binary, and the `net`
 capability.

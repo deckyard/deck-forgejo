@@ -120,8 +120,9 @@ A helper that receives a caught deck error is typed `ForgejoError`, not
 
 ## Dependencies on the interpreter
 
-Floor `>=0.26.0`, capability `net`. `src/` needs nothing newer than 0.25; the
-floor was raised because the example uses `os.hasEnv`. It uses the bundled
+Floor `>=0.27.0`, capability `net`, for the UTF-8 codecs of
+`encoding.encode` / `decode` and `strings.replicate`; the example also uses
+`os.hasEnv` (0.26.0). It uses the bundled
 `http`, `multipart` and `uri` modules. From `jennifer`'s milestones: M28.57
 (the error conventions) and M28.65 (transport failures as `net.NetError`,
 kind `"net"`, which the deck passes on).
