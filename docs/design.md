@@ -5,15 +5,15 @@
 
 ## Scope
 
-A client for the Forgejo REST API (`/api/v1`), for Codeberg or a self-hosted
-Forgejo; Gitea speaks mostly the same API. Typed verbs cover repositories and
+A client for the Forgejo™ REST API (`/api/v1`), for Codeberg™ or a self-hosted
+Forgejo; Gitea™ speaks mostly the same API. Typed verbs cover repositories and
 their settings, issues, labels, milestones, pull requests and reviews,
 releases and assets, branches, tags, files, commit statuses and Actions
 (workflow dispatch, variables, secrets). `call` and `getAll` reach any other
 endpoint.
 
 The deck is also one of the three backends of `@deckyard/codehost`, which
-puts one API over GitHub, GitLab and Forgejo; several fields and fixes exist
+puts one API over GitHub™, GitLab™ and Forgejo; several fields and fixes exist
 because codehost needed them.
 
 Out of scope:

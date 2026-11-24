@@ -56,7 +56,7 @@ def newest as forgejo.Tag init forgejo.tags($c, "me/app")[0];
 
 ## Files
 
-`readFile` reads a file at a branch, tag or commit, a file in Git LFS as its
+`readFile` reads a file at a branch, tag or commit, a file in Git™ LFS as its
 content; `writeFile` commits a new version, or the first one:
 
 ```jennifer

@@ -46,4 +46,4 @@ forgejo.deleteHook($c, "me/app", $h.id);
 ```
 
 The hook posts JSON and signs it with the secret (`X-Forgejo-Signature`,
-HMAC-SHA256). Other hook types (Slack, Matrix, ...) go through `call`.
+HMAC-SHA256). Other hook types (Slack™, Matrix™, ...) go through `call`.

@@ -122,7 +122,7 @@ Every error of kind `"forgejo"`.
 | `headSha as string` | the commit at the head |
 | `headRepo as string` | the repository of the head branch, `owner/name`; another for a fork, `""` once it is gone |
 | `isDraft as bool` | whether it is a draft |
-| `mergeable as bool` | whether Forgejo can merge it |
+| `mergeable as bool` | whether Forgejo™ can merge it |
 | `merged as bool` | whether it is merged |
 | `mergeSha as string` | the merge commit; `""` until merged |
 | `htmlUrl as string` | its page |

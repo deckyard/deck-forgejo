@@ -3,15 +3,15 @@
 
 # @deckyard/forgejo
 
-A client for the [Forgejo](https://forgejo.org/) REST API, the API of
-Codeberg and of self-hosted Forgejo. `call` reaches any endpoint of
+A client for the [Forgejo™](https://forgejo.org/) REST API, the API of
+Codeberg™ and of self-hosted Forgejo. `call` reaches any endpoint of
 `/api/v1` and `getAll` follows the pages of a list. Typed verbs cover the
 daily work: repositories and their settings, collaborators and webhooks;
 issues, comments, labels and milestones; pull requests, reviews and
 merging; releases and their assets; branches, tags and files; commits,
 commit statuses and Forgejo Actions (workflows, secrets, variables).
 
-Gitea speaks the same API, so most of the deck works there too; it is tested
+Gitea™ speaks the same API, so most of the deck works there too; it is tested
 against Forgejo.
 
 ## Conventions
@@ -67,3 +67,11 @@ kind `"net"`: the `net.NetError` that `http` threw, passed on unchanged, so
 
 Jennifer 0.27.0 or newer, the default `jennifer` binary, and the `net`
 capability.
+
+## Trademarks
+
+Codeberg™ is a trademark of Codeberg e.V. Other product and company names,
+such as Forgejo™ and Gitea™, may be trademarks of their respective owners.
+They are used only to identify the products this deck works with. This deck
+is an independent project, not affiliated with, sponsored or endorsed by
+Codeberg e.V., the Forgejo project or CommitGo, Inc.

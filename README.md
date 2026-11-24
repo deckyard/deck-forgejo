@@ -4,13 +4,13 @@
 [![Documentation](https://img.shields.io/badge/docs-github%20pages-blue)](https://deckyard.github.io/deck-forgejo/)
 [![release](https://img.shields.io/github/v/release/deckyard/deck-forgejo)](https://github.com/deckyard/deck-forgejo/releases/latest)
 
-A client for the Forgejo REST API, for
-[Jennifer](https://jennifer-lang.dev/) programs: Codeberg or a self-hosted
+A client for the Forgejo™ REST API, for
+[Jennifer](https://jennifer-lang.dev/) programs: Codeberg™ or a self-hosted
 Forgejo. Repositories with their settings, collaborators and webhooks;
 issues, comments, labels and milestones; pull requests, reviews and
 merging; releases with their assets; branches, tags and files; commits,
 commit statuses and Forgejo Actions. `call` and `getAll` reach every other
-endpoint. Gitea speaks most of the same API.
+endpoint. Gitea™ speaks most of the same API.
 
 **[Documentation](https://deckyard.github.io/deck-forgejo/)**
 
@@ -51,6 +51,14 @@ jennifer test src/forgejo_test.j     # the test overlay
 tools/check-docs.sh                  # docs against the code
 tools/pack.sh dist                   # build the release archive
 ```
+
+## Trademarks
+
+Codeberg™ is a trademark of Codeberg e.V. Other product and company names,
+such as Forgejo™ and Gitea™, may be trademarks of their respective owners.
+They are used only to identify the products this deck works with. This deck
+is an independent project, not affiliated with, sponsored or endorsed by
+Codeberg e.V., the Forgejo project or CommitGo, Inc.
 
 ## Licence
 
