@@ -120,7 +120,7 @@ A helper that receives a caught deck error is typed `ForgejoError`, not
 
 ## Dependencies on the interpreter
 
-Floor `>=0.27.0`, capability `net`, for the UTF-8 codecs of
+Floor `>=0.28.0` (the calls 0.29.0 removes are replaced by their 0.28.0 forms), capability `net`, for the UTF-8 codecs of
 `encoding.encode` / `decode` and `strings.replicate`; the example also uses
 `os.hasEnv` (0.26.0). It uses the bundled
 `http`, `multipart` and `uri` modules. From `jennifer`'s milestones: M28.57

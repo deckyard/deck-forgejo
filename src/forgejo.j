@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 # SPDX-FileCopyrightText: Copyright (C) 2026 mplx <mplx@jennifer-lang.dev>
-# pragma-jennifer-version: >=0.27.0
+# pragma-jennifer-version: >=0.28.0
 # pragma-jennifer-capability: net
 
 /**
@@ -33,6 +33,8 @@ use encoding;
 use json;
 use lists;
 use maps;
+use math;
+use net;
 use regex;
 use strings;
 import "http.j" as http;
@@ -1647,14 +1649,12 @@ export func uploadAsset(
     $headers["Content-Type"] = $built.contentType;
     def r as http.Response;
     try {
-        $r = http.requestRawBodyTls(
+        $r = textResponse(http.sendBytes(
             "POST",
             $c.url + "/api/v1" + $path,
             $headers,
             $built.body,
-            idleMs($c),
-            0,
-            $c.tls);
+            httpOptions(idleMs($c), 0, $c.tls)));
     } catch (e) {
         # a network failure is a net.NetError: passed on with its fields
         if ($e.kind == "net") {
@@ -1709,7 +1709,12 @@ func fetchBytes(c as Client, url as string, maxBytes as int) {
         }
         $headers["Accept"] = "*/*";
         try {
-            $r = http.requestWithBytes("GET", $cur, $headers, "", idleMs($c), $maxBytes, $c.tls);
+            $r = http.sendBytes(
+                "GET",
+                $cur,
+                $headers,
+                encoding.encode("utf-8", ""),
+                httpOptions(idleMs($c), $maxBytes, $c.tls));
         } catch (e) {
             # a network failure is a net.NetError: passed on with its fields
             if ($e.kind == "net") {
@@ -3185,7 +3190,7 @@ func numberAt(v as json.Value, ptr as string) {
     if ($kind == "int") {
         return json.asInt($v, $ptr);
     } elseif ($kind == "float") {
-        return convert.toInt(json.asFloat($v, $ptr));
+        return math.trunc(json.asFloat($v, $ptr));
     } elseif ($kind == "string") {
         try {
             return convert.toInt(strings.trim(json.asString($v, $ptr)));
@@ -3226,4 +3231,41 @@ func items(v as json.Value, ptr as string) {
         $i = $i + 1;
     }
     return $out;
+}
+
+# httpOptions is the http.Options a positional timeout, body cap and TLS
+# setting stand for: a timeout of 0 means no idle timeout, as it did for the
+# positional calls.
+func httpOptions(timeoutMs as int, maxBytes as int, tls as http.TlsOptions) {
+    def o as http.Options;
+    $o.timeoutMs = $timeoutMs;
+    if ($timeoutMs == 0) {
+        $o.timeoutMs = math.MAX_INT;
+    }
+    $o.maxBytes = $maxBytes;
+    def t as net.TLSOptions;
+    $t.skipVerify = $tls.skipVerify;
+    $t.caCert = $tls.caCert;
+    $o.tlsOptions = $t;
+    return $o;
+}
+
+# textResponse is a byte response with its body decoded as UTF-8; a body that is
+# not valid UTF-8 throws kind "http".
+func textResponse(r as http.BytesResponse) {
+    def body as string;
+    try {
+        $body = encoding.decode("utf-8", $r.body);
+    } catch (e) {
+        throw Error{
+            kind: "http",
+            message: "http: response body is not valid UTF-8 (use the byte verbs)"
+        };
+    }
+    return http.Response{
+        status: $r.status,
+        statusText: $r.statusText,
+        headers: $r.headers,
+        body: $body
+    };
 }

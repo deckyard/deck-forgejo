@@ -14,8 +14,8 @@ deck = "https://raw.githubusercontent.com/deckyard/deck-forgejo/main/deck.toml"
 homepage = "https://github.com/deckyard/deck-forgejo"
 manual = "https://deckyard.github.io/deck-forgejo/"
 
-# 0.27.0 is the first release with the UTF-8 codecs of `encoding.encode` /
-# `decode` and `strings.replicate`, which the deck uses.
+# 0.28.0: `http.sendBytes` takes its TLS settings in `http.Options.tlsOptions`
+# (the positional request calls are removed in 0.29.0).
 # Only the default binary: `jennifer-tiny` has no `net` capability.
 [engines]
-jennifer = ">=0.27.0"
+jennifer = ">=0.28.0"
